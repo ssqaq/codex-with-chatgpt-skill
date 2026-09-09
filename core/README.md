@@ -21,14 +21,17 @@ No API keys, no reverse proxy — official web UI plus a read-only MCP bridge.
 ## What it is · 这是什么
 
 **中文** — 把 ChatGPT 网页版变成 Codex 编码会话的"规划与审查大脑"，执行权
-完全保留在 Codex 手里。你的仓库永远不会被上传：ChatGPT 通过一条安全的、
-OAuth 保护的**只读** MCP 连接，按需读取当前工作区里它真正需要的那几行代码。
+完全保留在 Codex 手里。仓库不会整体上传：ChatGPT 通过安全的、OAuth 保护的
+**只读** MCP 连接，按需读取当前任务获准的文件、差异、测试信息或图片；明确读取
+的内容会经当前连接发送给 ChatGPT 分析；图片/消息使用量仍可能计入账号自身的额度。
 
 **EN** — Use the ChatGPT web app as the planning and review brain for your
-Codex coding sessions, while Codex keeps full ownership of execution. Your
-repository is never uploaded: ChatGPT reads exactly the lines it needs through
-a secure, OAuth-protected, **read-only** MCP connection to your current
-workspace.
+Codex coding sessions, while Codex keeps full ownership of execution. The
+repository is not uploaded as a whole: ChatGPT reads only task-approved files,
+diffs, test metadata, or images through a secure, OAuth-protected, **read-only**
+MCP connection to your current workspace. Explicitly read content is sent through
+that connection for analysis; image/message usage may still count against the
+ChatGPT account's own limits.
 
 Detailed docs below are in English · 详细中文文档见 **[README.zh-CN.md](README.zh-CN.md)**
 
@@ -43,10 +46,10 @@ Detailed docs below are in English · 详细中文文档见 **[README.zh-CN.md](
 
 1. 环境自检：需要 git 和 Node.js ≥ 20，缺什么就自动安装
   （macOS 用 Homebrew，Windows 用 winget），同时安装 cloudflared。
-2. 下载：把 https://github.com/XiaoDuoYa/codex-with-chatgpt 克隆到
+2. 下载：把 https://github.com/ssqaq/codex-with-chatgpt-skill 克隆到
    ~/codex-with-chatgpt（已存在就 git pull 更新）。
 3. 构建：在该目录里执行 corepack pnpm install 和 corepack pnpm build。
-4. 安装 Skill：把仓库里的 skill/SKILL.md 复制到
+4. 安装 Skill：把仓库根目录的 SKILL.md 复制到
    ~/.codex/skills/codex-with-chatgpt/SKILL.md，并把文件中
    "The codex-with-chatgpt checkout lives at:" 那一行的路径改成实际克隆路径。
 5. 首次配置：按 SKILL.md 里的 first-time setup 流程执行
@@ -69,7 +72,7 @@ I am a non-technical user — do everything yourself:
 1. Check the environment: git and Node.js >= 20 must be available. Install
    anything missing yourself (macOS: Homebrew, Windows: winget). Also install
    cloudflared.
-2. Download: clone https://github.com/XiaoDuoYa/codex-with-chatgpt into
+2. Download: clone https://github.com/ssqaq/codex-with-chatgpt-skill into
    ~/codex-with-chatgpt (if it already exists, git pull to update).
 3. Build: inside that folder run `corepack pnpm install` then `corepack pnpm build`.
 4. Install the Skill: copy the repository root SKILL.md to
@@ -98,7 +101,7 @@ anytime. / Skill 每天自动检查一次 GitHub，有新版本会自动更新�
 
 ## Install → Setup → Use (manual)
 
-1. Install the Codex Skill: copy `skill/` to `~/.codex/skills/codex-with-chatgpt/`.
+1. Install the Codex Skill: copy the repository root `SKILL.md` to `~/.codex/skills/codex-with-chatgpt/`.
 2. Tell Codex: **"Set up Codex with ChatGPT."** (中文: "使用 Codex with ChatGPT 完成首次配置。")
 3. Use Codex normally: **"Use Codex with ChatGPT to implement XXX."**
 
@@ -234,7 +237,7 @@ docs/         architecture / protocol / security / troubleshooting
 
 ## Status & disclaimer
 
-V1. Verified end-to-end: bridge, OAuth + pairing, public tunnel, ChatGPT
+Current version 1.13.0. Verified end-to-end: bridge, OAuth + pairing, public tunnel, ChatGPT
 connector setup, zero-touch first-run experience.
 
 **Unofficial community project. Not affiliated with or endorsed by OpenAI.**

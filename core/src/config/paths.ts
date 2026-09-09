@@ -34,11 +34,24 @@ export function stateSubdir(name: string): string {
 /** Write a JSON file with owner-only permissions. */
 export function writeSecureJson(file: string, data: unknown): void {
   ensureDir(path.dirname(file));
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), { mode: 0o600 });
+  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(data, null, 2), { mode: 0o600 });
   try {
-    fs.chmodSync(file, 0o600);
+    fs.chmodSync(temporary, 0o600);
   } catch {
     // best effort on platforms without chmod semantics
+  }
+  try {
+    fs.renameSync(temporary, file);
+  } catch (error) {
+    // Windows may refuse to replace an existing file with rename; remove only
+    // the known destination and retry, while keeping the temp file private.
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST" && (error as NodeJS.ErrnoException).code !== "EPERM") {
+      fs.rmSync(temporary, { force: true });
+      throw error;
+    }
+    fs.rmSync(file, { force: true });
+    fs.renameSync(temporary, file);
   }
 }
 

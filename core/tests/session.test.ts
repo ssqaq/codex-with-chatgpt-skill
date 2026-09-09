@@ -107,6 +107,9 @@ describe("mergeSession", () => {
           waitingFor: "GPT_REVIEW",
           originalGoal: "dark mode",
           nextExpectedStep: "wait for review",
+          selfCheckStatus: "PASS",
+          pageVerifyStatus: "NOT_APPLICABLE",
+          verificationAt: "2026-01-01T00:00:00.000Z",
         },
       }
     );
@@ -132,6 +135,9 @@ describe("mergeSession", () => {
           protocolState: "EXECUTED_SENT",
           waitingFor: "GPT_REVIEW",
           originalGoal: "dark mode",
+          selfCheckStatus: "PASS",
+          pageVerifyStatus: "NOT_APPLICABLE",
+          verificationAt: "2026-01-01T00:00:00.000Z",
         },
       }
     );
@@ -249,6 +255,31 @@ describe("mergeSession", () => {
         }
       )
     ).toThrow(/consensus confirmations/);
+  });
+
+  it("blocks completion until post-change verification is recorded", () => {
+    expect(() =>
+      mergeSession(
+        { url: "https://chatgpt.com/c/verify", taskId: "c2c_verify", savedAt: "2026-01-01T00:00:00.000Z" },
+        { checkpoint: { protocolState: "EXECUTED_LOCAL", waitingFor: "none" } }
+      )
+    ).toThrow(/post-change verification/);
+
+    const verified = mergeSession(
+      { url: "https://chatgpt.com/c/verify", taskId: "c2c_verify", savedAt: "2026-01-01T00:00:00.000Z" },
+      {
+        checkpoint: {
+          protocolState: "EXECUTED_LOCAL",
+          waitingFor: "none",
+          selfCheckStatus: "PASS",
+          pageVerifyStatus: "NOT_APPLICABLE",
+          pageScope: "none",
+          verificationAt: "2026-01-01T00:00:00.000Z",
+        },
+      }
+    );
+    expect(verified.checkpoint?.selfCheckStatus).toBe("PASS");
+    expect(verified.checkpoint?.pageVerifyStatus).toBe("NOT_APPLICABLE");
   });
 
   it("leaves legacy sessions without a checkpoint unchanged", () => {

@@ -70,6 +70,23 @@ if (-not [regex]::IsMatch($content, $pattern)) { throw "Skill 中找不到工作
 $content = [regex]::Replace($content, $pattern, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $replacement })
 Set-Content -LiteralPath $targetSkill -Value $content -Encoding UTF8
 
+$sourceReferences = Join-Path $Checkout "references"
+$targetReferences = Join-Path $SkillDirectory "references"
+if (Test-Path $sourceReferences) {
+  if (Test-Path $targetReferences) { Remove-Item -LiteralPath $targetReferences -Recurse -Force }
+  Copy-Item -LiteralPath $sourceReferences -Destination $targetReferences -Recurse -Force
+} elseif (Test-Path $targetReferences) {
+  Remove-Item -LiteralPath $targetReferences -Recurse -Force
+}
+$sourceAgents = Join-Path $Checkout "agents"
+$targetAgents = Join-Path $SkillDirectory "agents"
+if (Test-Path $sourceAgents) {
+  if (Test-Path $targetAgents) { Remove-Item -LiteralPath $targetAgents -Recurse -Force }
+  Copy-Item -LiteralPath $sourceAgents -Destination $targetAgents -Recurse -Force
+} elseif (Test-Path $targetAgents) {
+  Remove-Item -LiteralPath $targetAgents -Recurse -Force
+}
+
 Write-Host "安装完成。"
 Write-Host "项目目录：$Checkout"
 Write-Host "Skill 文件：$targetSkill"

@@ -62,6 +62,7 @@ export interface PairingManagerOptions {
   maxAttempts?: number;
   ipRateLimit?: number;
   ipRateWindowMs?: number;
+  maxTrackedIps?: number;
 }
 
 export class PairingManager {
@@ -71,6 +72,7 @@ export class PairingManager {
   private readonly maxAttempts: number;
   private readonly ipRateLimit: number;
   private readonly ipRateWindowMs: number;
+  private readonly maxTrackedIps: number;
 
   constructor(
     private readonly workspaceId: string,
@@ -80,6 +82,7 @@ export class PairingManager {
     this.maxAttempts = opts.maxAttempts ?? 5;
     this.ipRateLimit = opts.ipRateLimit ?? 10;
     this.ipRateWindowMs = opts.ipRateWindowMs ?? 60_000;
+    this.maxTrackedIps = Math.max(1, Math.floor(opts.maxTrackedIps ?? 1024));
   }
 
   /** Create a new pairing session. Invalidates previous sessions (one active at a time). */
@@ -102,8 +105,15 @@ export class PairingManager {
   private checkIpRate(ip: string | undefined): boolean {
     if (!ip) return true;
     const now = Date.now();
+    for (const [trackedIp, entry] of this.ipHits) {
+      if (now >= entry.resetAt) this.ipHits.delete(trackedIp);
+    }
     const entry = this.ipHits.get(ip);
     if (!entry || now > entry.resetAt) {
+      if (this.ipHits.size >= this.maxTrackedIps) {
+        const oldest = this.ipHits.keys().next().value as string | undefined;
+        if (oldest) this.ipHits.delete(oldest);
+      }
       this.ipHits.set(ip, { count: 1, resetAt: now + this.ipRateWindowMs });
       return true;
     }

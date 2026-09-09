@@ -54,6 +54,8 @@ import {
   type ConversationMode,
   type ProtocolState,
   type WaitingFor,
+  type SelfCheckStatus,
+  type PageVerifyStatus,
 } from "../session/state.js";
 import { appendExecutionRecord } from "../execution/records.js";
 import { saveExecutionOutput } from "../execution/output.js";
@@ -987,6 +989,18 @@ session
               `ChatGPT ${saved.checkpoint.chatgptConsensus ? "已确认" : "未确认"}`
           );
         }
+        if (saved.checkpoint.selfCheckStatus || saved.checkpoint.pageVerifyStatus) {
+          say(
+            `修改后验证：自检 ${saved.checkpoint.selfCheckStatus ?? "未记录"} / ` +
+              `页面 ${saved.checkpoint.pageVerifyStatus ?? "未记录"}`
+          );
+        }
+        if (saved.checkpoint.modelName || saved.checkpoint.reasoningStrength) {
+          say(
+            `实际模型：${saved.checkpoint.modelName ?? "未记录"} / ` +
+              `强度 ${saved.checkpoint.reasoningStrength ?? "未记录"}`
+          );
+        }
       }
     }
   });
@@ -1017,6 +1031,12 @@ session
   .option("--consensus-repeats <n>", "consecutive repeated disagreement count")
   .option("--codex-consensus <boolean>", "whether Codex confirmed consensus")
   .option("--chatgpt-consensus <boolean>", "whether ChatGPT confirmed consensus")
+  .option("--self-check <status>", "PASS or FAIL after local checks")
+  .option("--page-verify <status>", "PASS, FAIL, or NOT_APPLICABLE")
+  .option("--page-scope <text>", "page or function verified")
+  .option("--verification-at <timestamp>", "ISO timestamp for the verification gate")
+  .option("--model <name>", "model actually observed in ChatGPT")
+  .option("--reasoning-strength <strength>", "reasoning strength actually observed")
   .option("--clear-checkpoint", "drop the active checkpoint (task DONE)", false)
   .action(
     (opts: {
@@ -1043,6 +1063,12 @@ session
       consensusRepeats?: string;
       codexConsensus?: string;
       chatgptConsensus?: string;
+      selfCheck?: string;
+      pageVerify?: string;
+      pageScope?: string;
+      verificationAt?: string;
+      model?: string;
+      reasoningStrength?: string;
       clearCheckpoint: boolean;
     }) => {
       const workspace = new Workspace(resolveWorkspace(opts.workspace));
@@ -1070,6 +1096,19 @@ session
         if (normalized === "false" || normalized === "0" || normalized === "no") return false;
         throw new Error(`${label} must be true or false`);
       };
+      const selfCheckRaw = opts.selfCheck?.trim().toUpperCase();
+      if (selfCheckRaw && selfCheckRaw !== "PASS" && selfCheckRaw !== "FAIL") {
+        throw new Error("self-check must be PASS or FAIL");
+      }
+      const pageVerifyRaw = opts.pageVerify?.trim().toUpperCase();
+      if (pageVerifyRaw && !["PASS", "FAIL", "NOT_APPLICABLE"].includes(pageVerifyRaw)) {
+        throw new Error("page-verify must be PASS, FAIL, or NOT_APPLICABLE");
+      }
+      const verificationAt = opts.verificationAt?.trim() ||
+        (selfCheckRaw || pageVerifyRaw ? new Date().toISOString() : undefined);
+      if (verificationAt && Number.isNaN(Date.parse(verificationAt))) {
+        throw new Error("verification-at must be an ISO timestamp");
+      }
       const saved = mergeSession(readSession(workspace.id), {
         url: opts.url,
         title: opts.title,
@@ -1096,6 +1135,12 @@ session
               consensusRepeatedRounds: opts.consensusRepeats ? parseInt(opts.consensusRepeats, 10) : undefined,
               codexConsensus: parseOptionalBoolean(opts.codexConsensus, "codex-consensus"),
               chatgptConsensus: parseOptionalBoolean(opts.chatgptConsensus, "chatgpt-consensus"),
+              selfCheckStatus: selfCheckRaw as SelfCheckStatus | undefined,
+              pageVerifyStatus: pageVerifyRaw as PageVerifyStatus | undefined,
+              pageScope: opts.pageScope,
+              verificationAt,
+              modelName: opts.model,
+              reasoningStrength: opts.reasoningStrength,
             }
           : undefined,
       });
@@ -1181,6 +1226,12 @@ program
   .option("--tests <summary>", "e.g. '27 passed'")
   .option("--exit-status <status>", "ok | failed | blocked", "ok")
   .option("--notes <text>")
+  .option("--self-check <status>", "PASS or FAIL after local checks")
+  .option("--page-verify <status>", "PASS, FAIL, or NOT_APPLICABLE")
+  .option("--page-scope <text>", "page or function verified")
+  .option("--verification-at <timestamp>", "ISO timestamp for the verification gate")
+  .option("--model <name>", "model actually observed in ChatGPT")
+  .option("--reasoning-strength <strength>", "reasoning strength actually observed")
   .option("--command <text>", "command whose output may be offered to ChatGPT")
   .option("--output <text>", "command output (prefer --output-file for long logs)")
   .option("--output-file <path>", "read command output from a local file")
@@ -1194,6 +1245,12 @@ program
       tests?: string;
       exitStatus: string;
       notes?: string;
+      selfCheck?: string;
+      pageVerify?: string;
+      pageScope?: string;
+      verificationAt?: string;
+      model?: string;
+      reasoningStrength?: string;
       command?: string;
       output?: string;
       outputFile?: string;
@@ -1226,6 +1283,12 @@ program
         exitStatus: opts.exitStatus,
         timestamp: new Date().toISOString(),
         notes: opts.notes?.slice(0, 400),
+        selfCheckStatus: opts.selfCheck?.trim().toUpperCase() as "PASS" | "FAIL" | undefined,
+        pageVerifyStatus: opts.pageVerify?.trim().toUpperCase() as "PASS" | "FAIL" | "NOT_APPLICABLE" | undefined,
+        pageScope: opts.pageScope?.slice(0, 400),
+        verificationAt: opts.verificationAt,
+        modelName: opts.model?.slice(0, 120),
+        reasoningStrength: opts.reasoningStrength?.slice(0, 80),
         outputId,
         outputAvailable,
       });

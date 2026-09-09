@@ -13,8 +13,9 @@ ChatGPT 付费订阅的网页版额度大量闲置，Codex 却在消耗紧张的
 ## 这是什么
 
 把 ChatGPT 网页版变成 Codex 编码会话的"规划与审查大脑"，而执行权完全保留在
-Codex 手里。你的仓库永远不会被上传——ChatGPT 通过一条安全的、OAuth 保护的
-**只读** MCP 连接，按需读取当前工作区里它真正需要的那几行代码。
+Codex 手里。仓库不会整体上传——ChatGPT 通过安全的、OAuth 保护的**只读** MCP
+连接，按需读取当前任务获准的文件、差异、测试信息或图片；明确读取的内容会经
+当前连接发送给 ChatGPT 分析。
 
 ## 一段话安装（纯小白专用）
 
@@ -27,7 +28,7 @@ Agent（Codex），然后去倒杯咖啡：
 
 1. 环境自检：需要 git 和 Node.js ≥ 20，缺什么就自动安装
   （macOS 用 Homebrew，Windows 用 winget），同时安装 cloudflared。
-2. 下载：把 https://github.com/XiaoDuoYa/codex-with-chatgpt 克隆到
+2. 下载：把 https://github.com/ssqaq/codex-with-chatgpt-skill 克隆到
    ~/codex-with-chatgpt（已存在就 git pull 更新）。
 3. 构建：在该目录里执行 corepack pnpm install 和 corepack pnpm build。
 4. 安装 Skill：把仓库根目录的 SKILL.md 复制到
@@ -47,12 +48,16 @@ Agent（Codex），然后去倒杯咖啡：
 
 ## 安装 → 配置 → 使用（手动版）
 
-1. 安装 Codex Skill：把 `skill/` 复制到 `~/.codex/skills/codex-with-chatgpt/`。
+1. 安装 Codex Skill：把仓库根目录的 `SKILL.md` 复制到 `~/.codex/skills/codex-with-chatgpt/`。
 2. 对 Codex 说：**"使用 Codex with ChatGPT 完成首次配置。"**
 3. 之后正常使用：**“使用 Codex with ChatGPT，帮我实现 XXX。”**
 
 如果想先讨论方案再改代码，可以说：**“先做方案，多轮评审后再修改这个功能。”**
 Codex 会显示当前第几轮，把纯文字方案发给网页版 GPT 评审，双方确认共识后才开始修改。
+
+图片说明：不会把整个仓库上传。ChatGPT 只按需读取获准的文件或图片；明确读取的图片会经当前连接发送给 ChatGPT 分析，可能计入账号的图片/消息额度，但不会保存到 ChatGPT 文件区。
+
+模型说明：Skill 不能强制网页切换到账号看不到的模型。账号列表里有 GPT-5.6 Sol 时，可选择它和 Pro（当前可见的最高强度）；否则使用账号实际可见的最高模型。
 
 说明书到此结束。你不需要知道 MCP、OAuth、Tunnel、端口、localhost 是什么——
 Codex 会自动完成所有配置，你只会看到：
@@ -69,7 +74,7 @@ Codex with ChatGPT
 Ready.
 ```
 
-唯一可能需要你动手的步骤：登录 ChatGPT（如果要用固定域名，再登录一次 Cloudflare）。**新仓库**还会请你在 ChatGPT 里建一次项目（合集）：名字用仓库名，记忆选「仅限项目记忆」。侧栏如果没有「项目」，把鼠标放在「聊天」上，点右边三个点，选「按项目整理」。之后对话都从合集页开，不用回首页。已经在用的仓库默认还是原来的一条长对话，除非你说要改成 Project。
+首次可能只会问你一次连接方式；之后会记住。唯一可能需要你动手的步骤是登录 ChatGPT（如果要用固定域名，再登录一次 Cloudflare）。**新仓库**还会请你在 ChatGPT 里建一次项目（合集）：名字用仓库名，记忆选「仅限项目记忆」。侧栏如果没有「项目」，把鼠标放在「聊天」上，点右边三个点，选「按项目整理」。之后对话都从合集页开，不用回首页。已经在用的仓库默认还是原来的一条长对话，除非你说要改成 Project。
 
 ### 可选的固定域名
 
@@ -152,7 +157,7 @@ c2c status / doctor / pair / unpair / logs / stop
 ```
 src/
   bridge/     本机回环 HTTP 服务、端口自动恢复、管理 API
-  mcp/        9 个只读工具、无状态 Streamable HTTP
+  mcp/        10 个只读工具、无状态 Streamable HTTP
   auth/       OAuth 2.1（PKCE、动态注册、refresh 轮换、吊销）
   pairing/    一次性配对码（CSPRNG、TTL、限速）
   workspace/  路径收敛、敏感文件策略、搜索、git
@@ -167,7 +172,7 @@ docs/         架构 / 协议 / 安全 / 故障排查
 
 ## 状态与声明
 
-V1。已端到端验证：Bridge、OAuth + 配对、公网隧道、ChatGPT 连接器配置、
+当前版本 1.12.0。已端到端验证：Bridge、OAuth + 配对、公网隧道、ChatGPT 连接器配置、
 零操作首次配置体验。
 
 **非官方社区项目，与 OpenAI 无关联，未获其背书。**

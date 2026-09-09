@@ -253,6 +253,25 @@ describe("authorization + token flow", () => {
     });
     expect(response.status).toBe(400);
   });
+
+  it("rejects an authorization request that contains an unsupported scope", async () => {
+    const clientId = await registerClient();
+    const { challenge } = pkceVerifierAndChallenge();
+    const authorizeUrl = new URL(`${base}/oauth/authorize`);
+    authorizeUrl.searchParams.set("client_id", clientId);
+    authorizeUrl.searchParams.set("redirect_uri", REDIRECT_URI);
+    authorizeUrl.searchParams.set("response_type", "code");
+    authorizeUrl.searchParams.set("code_challenge", challenge);
+    authorizeUrl.searchParams.set("code_challenge_method", "S256");
+    authorizeUrl.searchParams.set("scope", "workspace.read write_files");
+
+    const response = await fetch(authorizeUrl, { redirect: "manual" });
+    expect(response.status).toBe(302);
+    const location = response.headers.get("location");
+    expect(location).toBeTruthy();
+    expect(new URL(location!).searchParams.get("error")).toBe("invalid_scope");
+    expect(new URL(location!).searchParams.get("error_description")).toContain("write_files");
+  });
 });
 
 describe("token enforcement on /mcp", () => {

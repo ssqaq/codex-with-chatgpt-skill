@@ -60,6 +60,25 @@ describe("PairingManager", () => {
     expect(manager.verify("AAAA-AAAA", "5.6.7.8").reason).not.toBe("rate_limited");
   });
 
+  it("bounds tracked IP entries and removes expired entries", () => {
+    vi.useFakeTimers();
+    const manager = new PairingManager("ws1", {
+      ipRateLimit: 100,
+      maxAttempts: 100,
+      maxTrackedIps: 2,
+      ipRateWindowMs: 1_000,
+    });
+    manager.create();
+    manager.verify("AAAA-AAAA", "1.1.1.1");
+    manager.verify("AAAA-AAAA", "2.2.2.2");
+    manager.verify("AAAA-AAAA", "3.3.3.3");
+    const tracked = (manager as unknown as { ipHits: Map<string, unknown> }).ipHits;
+    expect(tracked.size).toBeLessThanOrEqual(2);
+    vi.advanceTimersByTime(1_001);
+    manager.verify("AAAA-AAAA", "4.4.4.4");
+    expect(tracked.size).toBe(1);
+  });
+
   it("invalidates previous sessions when creating a new one", () => {
     const manager = new PairingManager("ws1");
     const first = manager.create();

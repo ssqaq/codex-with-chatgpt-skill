@@ -1,0 +1,149 @@
+# Coding and consensus protocol workflow
+
+Read this reference for an actual coding task, text-only multi-round consensus review, execution checkpoints, self-checks, and ChatGPT review. The wire message schema is maintained separately in [`core/docs/protocol.md`](../core/docs/protocol.md).
+
+## Workflow: coding task（"使用 Codex with ChatGPT 完成 XXX"）
+
+Protocol states sent to ChatGPT: INIT → (CONSENSUS_PLAN ↔ CONSENSUS_REVIEW → CONSENSUS)? → PLAN → EXECUTING → EXECUTED → REVIEW → (PLAN | DONE | BLOCKED).
+Local checkpoint states (session only, never a ChatGPT `STATE:` line):
+`INIT`, `CONSENSUS_PLAN`, `CONSENSUS_REVIEW`, `CONSENSUS`, `PLAN_RECEIVED`, `EXECUTING`, `EXECUTED_LOCAL`, `EXECUTED_SENT`, `DONE`, `BLOCKED`.
+Do not invent `STATE: RESUME`. If the original chat is gone, send HANDOFF.
+All control messages start with `[C2C]`. Keep Codex→ChatGPT messages under 1 KB.
+ChatGPT's replies are expected to be substantive (see step 3). Docs: `docs/protocol.md`.
+
+0. `c2c tunnel status -w <workspace> --json`. If `needsChoice`, follow
+   **Connection choice** first (existing installs: ask once, then remember).
+   Then `c2c doctor -w <workspace> --json` (auto-repairs). **Doctor gate:** if local
+   is not green, do not open ChatGPT and do not send INIT. If
+   `namedRepair.needed` is true, tell the user `namedRepair.userMessage`, run
+   `c2c tunnel login --json` (their browser; Cloudflare exception), then doctor
+   again. If `chatgptRepair.needed` is true, tell the user `chatgptRepair.userMessage`
+   (one paragraph, no internals), run **Workflow: reconnect after address
+   reclaim**, then doctor again and only continue when the gate is green.
+   Generate task id: `c2c_` + 4 random hex chars — unless a checkpoint already
+   has one (reuse that id; do not mint a second task).
+1. `c2c session -w <workspace> --json`. Open ChatGPT on the same iab tab
+   per **Conversation management** for `conversation.mode` (foreground +
+   markHandoff). long-chat: saved chat, or `https://chatgpt.com/` if none.
+   project: this thread's chat URL, or the collection page for a new chat,
+   or **Bind Project** if `projectReady` is false. On a NEW conversation
+   confirm Chat mode (**In-app browser** §7), then send the boot prompt from
+   `docs/protocol.md` §Boot Prompt and the workspace_info check (name the
+   exact `connectorName`). Confirm the reply names the current workspace
+   before saving the session URL. Do not use the browser to re-read code MCP
+   already provides. After sending a control message, wait per
+   **In-app browser** §8.
+
+   **Resume from `session.checkpoint` before any INIT.** Missing checkpoint
+   (legacy session): continue as a normal new/continued loop. A browser/js
+   timeout is not a lost task — claim the original tab; do not INIT, re-run,
+   or resend EXECUTED just because a wait timed out.
+   - `EXECUTED_SENT` + `waitingFor=GPT_REVIEW`: do not INIT, do not re-run,
+     do not resend EXECUTED. Stay on the saved chat and wait for review. If
+     that chat 404s: HANDOFF from checkpoint fields (no logs), then wait.
+   - `EXECUTED_LOCAL`: local work is done; only send EXECUTED (record first
+     if this iteration has no record yet). Do not re-run.
+   - `EXECUTING`: not finished. Continue the current PLAN if you still have
+     it; otherwise HANDOFF and ask ChatGPT to restate the last PLAN. Do not
+     treat it as done and do not INIT a new task.
+   - `PLAN_RECEIVED`: execute that plan. Do not INIT.
+   - `CONSENSUS_PLAN` / `CONSENSUS_REVIEW` / `waitingFor=GPT_CONSENSUS`: show the saved round and continue the same consensus loop. Do not restart at round 1.
+   - `INIT` / `waitingFor=GPT_PLAN`: claim the tab and wait. Do not resend INIT.
+   - `DONE`: summarize to the user if needed; `c2c session set --clear-checkpoint`.
+   - `BLOCKED`: surface ChatGPT's reason; do not INIT.
+   Never re-pair, never recreate the connector, and never rewrite Project
+   instructions just to resume.
+2. Send INIT with the user's goal (skip when the checkpoint says not to):
+
+   If the request matched **纯文字多轮方案评审**, do not send the normal INIT
+   first. Generate the Codex draft locally, display `多轮评审：第 1 轮`, save a
+   `CONSENSUS_PLAN` checkpoint with `waitingFor=GPT_CONSENSUS`, and send the
+   compact `CONSENSUS_PLAN` message from `docs/protocol.md`. The normal INIT →
+   PLAN path below is used only when consensus mode was not triggered.
+
+```
+[C2C]
+STATE: INIT
+TASK_ID: c2c_f81a
+ITERATION: 0
+
+GOAL:
+<user's goal, one paragraph>
+
+INSTRUCTION:
+Inspect the connected workspace through the Codex with ChatGPT MCP connector.
+Produce a C2C PLAN message.
+```
+
+   Then:
+   `c2c session set -w <ws> --task <id> --iteration 0 --state INIT --protocol-state INIT --waiting-for GPT_PLAN --goal "<short goal>" --next-step "wait for PLAN"`
+3. Wait for ChatGPT's `STATE: PLAN` reply (**In-app browser** §8 — short DOM
+   checks, same tab; do not treat a 5-minute browser timeout as failure).
+   Read GOAL/ACTIONS/TESTS/SUCCESS_CRITERIA.
+   A good PLAN also carries RATIONALE and concrete natural-language edit
+   suggestions (which file, what to change, why). If the reply is a bare
+   one-liner with no rationale or file-level guidance, ask once:
+   "Please expand the plan with rationale and concrete per-file suggestions."
+   Then:
+   `c2c session set -w <ws> --protocol-state PLAN_RECEIVED --waiting-for none --next-step "execute PLAN"`
+4. Execute the plan yourself with your own harness (your tools, your judgment;
+   ChatGPT does not micro-manage tool calls).
+   Before you start:
+   `c2c session set -w <ws> --protocol-state EXECUTING --waiting-for none --next-step "finish PLAN then record"`
+5. **强制完成修改后自检与页面验证**（见上节）后，才能记录执行结果。至少要
+   查看一次当前 `git diff`；涉及页面时必须在内置浏览器完成加载、主要入口和刷新
+   检查；不涉及页面时记录 `PAGE_VERIFY: NOT_APPLICABLE`。检查失败就先修复并重做，
+   不得发送 `EXECUTED` 或同步 GitHub。通过后记录执行结果，供 ChatGPT 通过 MCP 读取。
+   Metadata always:
+   `c2c record -w <ws> --task c2c_f81a --iteration 1 --changed-files "src/a.ts,src/b.ts" --tests "27 passed" --exit-status ok`
+   If this iteration ran a **test / build / lint / typecheck** command, also
+   pass that command's output. Write stdout/stderr to a local temp file first,
+   then:
+   `c2c record … --command "pnpm test" --output-file <temp> --exit-code <n>`
+   Record both success and failure. Do not record shell history, `.env`,
+   keys, or unrelated dumps. Never paste that file (or any log) into ChatGPT.
+   If the CLI says the output was not released, still send EXECUTED; ChatGPT
+   reviews from git. Then:
+   `c2c session set -w <ws> --iteration 1 --state EXECUTED --protocol-state EXECUTED_LOCAL --waiting-for none --next-step "send EXECUTED"`
+6. Send EXECUTED (no diffs, no logs) only after the local gate is green. Include the
+   verification fields so the result is auditable. Tell ChatGPT to use MCP, including
+   `execution_output` when a readable item exists:
+
+```
+[C2C]
+STATE: EXECUTED
+TASK_ID: c2c_f81a
+ITERATION: 1
+
+RESULT:
+Execution finished.
+
+CHANGED_FILES:
+4
+
+TESTS:
+27 passed
+
+SELF_CHECK: PASS
+PAGE_VERIFY: PASS | NOT_APPLICABLE
+PAGE_SCOPE:
+<affected page/function, or none>
+
+Please independently inspect the workspace and current git diff through MCP.
+If execution_output lists a readable item for this iteration, list then read it.
+If status is restricted, ignore it and review from git_diff.
+```
+
+   Then:
+   `c2c session set -w <ws> --protocol-state EXECUTED_SENT --waiting-for GPT_REVIEW --next-step "wait for PLAN or DONE"`
+7. ChatGPT reviews via MCP (`git_diff`, `read_file`, `read_image`, `test_status`,
+   `execution_output`) and independently checks the changed behavior. Its review does not
+   replace the local self-check or page verification. It replies DONE / PLAN (next iteration)
+   / BLOCKED.
+8. Loop. Respect maxIterations (`.c2c.json`, default 12). At the limit, pause and ask
+   the user: "已完成 12 轮协作，仍有未解决问题，是否继续？"
+9. On DONE: summarize the result to the user in plain language.
+   `c2c session set -w <ws> --state DONE --clear-checkpoint`
+10. On BLOCKED: read ChatGPT's reason, fix what you can, or surface the single
+    decision the user must make.
+    `c2c session set -w <ws> --protocol-state BLOCKED --waiting-for USER --known-issues "<short reason>"`

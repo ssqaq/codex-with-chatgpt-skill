@@ -39,6 +39,14 @@ jobs:
       - name: 检查两份 Skill 一致
         working-directory: .
         run: cmp --silent SKILL.md core/skill/SKILL.md
+      - name: 检查公开文档一致和边界说明
+        working-directory: .
+        run: |
+          ! grep -n "XiaoDuoYa/codex-with-chatgpt" README.md core/README.md core/README.zh-CN.md SKILL.md core/skill/SKILL.md references/*.md
+          ! grep -n "仓库永远不会被上传\|never uploaded" README.md core/README.md core/README.zh-CN.md SKILL.md core/skill/SKILL.md references/*.md
+          grep -q "ssqaq/codex-with-chatgpt-skill" README.md
+          grep -q "可能计入" README.md core/README.zh-CN.md SKILL.md references/security-and-images.md
+          grep -q "当前可见" SKILL.md references/security-and-images.md
       - name: 检查安装脚本
         working-directory: .
         run: |

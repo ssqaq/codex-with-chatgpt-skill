@@ -95,7 +95,10 @@ export async function startBridge(opts: BridgeOptions): Promise<Bridge> {
   let publicBaseUrl: string | null = null;
 
   const app = express();
-  app.set("trust proxy", true);
+  // The bridge is reached through a local cloudflared process. Do not trust
+  // user-controlled X-Forwarded-* headers for OAuth URLs or pairing limits;
+  // the public tunnel URL is persisted in `publicBaseUrl` after it is ready.
+  app.set("trust proxy", false);
   app.disable("x-powered-by");
 
   const getBaseUrl = (req: Request): string => {

@@ -76,6 +76,19 @@ else:
     raise SystemExit("Skill 中找不到工作区路径行。")
 PY
 
+if [[ -d "$CHECKOUT/references" ]]; then
+  rm -rf "$SKILL_DIRECTORY/references"
+  cp -R "$CHECKOUT/references" "$SKILL_DIRECTORY/references"
+else
+  rm -rf "$SKILL_DIRECTORY/references"
+fi
+if [[ -d "$CHECKOUT/agents" ]]; then
+  rm -rf "$SKILL_DIRECTORY/agents"
+  cp -R "$CHECKOUT/agents" "$SKILL_DIRECTORY/agents"
+else
+  rm -rf "$SKILL_DIRECTORY/agents"
+fi
+
 echo "安装完成。"
 echo "项目目录：$CHECKOUT"
 echo "Skill 文件：$target_skill"

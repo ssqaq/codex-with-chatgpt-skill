@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, urlencoded, json } from "express";
 import { randomBytes } from "node:crypto";
-import { AuthStore, SUPPORTED_SCOPES, base64UrlSha256, filterScopes, safeEqual } from "./store.js";
+import { AuthStore, SUPPORTED_SCOPES, base64UrlSha256, parseRequestedScopes, safeEqual } from "./store.js";
 import { PairingManager } from "../pairing/manager.js";
 import type { Logger } from "../logger/index.js";
 import { PRODUCT_NAME } from "../version.js";
@@ -137,6 +137,7 @@ function pairingPage(opts: {
 export function createOAuthRouter(deps: OAuthDeps): Router {
   const router = Router();
   const pendingRequests = new Map<string, PendingAuthRequest>();
+  const MAX_PENDING_REQUESTS = 128;
 
   const prunePending = (): void => {
     const now = Date.now();
@@ -144,6 +145,8 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
       if (now > request.expiresAt) pendingRequests.delete(id);
     }
   };
+  const pendingCleanup = setInterval(prunePending, 60_000);
+  pendingCleanup.unref?.();
 
   // ---- Discovery metadata -------------------------------------------------
 
@@ -193,6 +196,10 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
 
   router.get("/oauth/authorize", (req, res) => {
     prunePending();
+    if (pendingRequests.size >= MAX_PENDING_REQUESTS) {
+      res.status(429).json({ error: "temporarily_unavailable", error_description: "Too many pending authorization requests" });
+      return;
+    }
     const query = req.query as Record<string, string | undefined>;
     const client = query.client_id ? deps.store.getClient(query.client_id) : undefined;
     if (!client) {
@@ -221,7 +228,12 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
       fail("invalid_request", "PKCE with S256 is required");
       return;
     }
-    const scopes = filterScopes(query.scope);
+    const scopeResult = parseRequestedScopes(query.scope);
+    if (scopeResult.invalid.length > 0) {
+      fail("invalid_scope", `Unsupported scope: ${scopeResult.invalid.join(", ")}`);
+      return;
+    }
+    const scopes = scopeResult.scopes;
     const request: PendingAuthRequest = {
       id: randomBytes(16).toString("hex"),
       clientId: client.clientId,

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Codex with ChatGPT"
+  short_description: "让 ChatGPT 负责规划和复核，Codex 负责修改并测试项目"
+  default_prompt: "使用 $codex-with-chatgpt 帮我规划并完成这个修改。"
+policy:
+  allow_implicit_invocation: true

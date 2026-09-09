@@ -16,9 +16,22 @@ if (-not $Force) {
 git -C $manifest.checkout reset --hard $manifest.commit
 $skill = Join-Path $BackupPath "SKILL.md"
 if (Test-Path $skill) {
-  $skillDirectory = $manifest.skillDirectory
+  $skillDirectory = if ($manifest.skillDirectory) { [string]$manifest.skillDirectory } else { Join-Path $HOME ".codex\skills\codex-with-chatgpt" }
   New-Item -ItemType Directory -Force -Path $skillDirectory | Out-Null
-  Copy-Item -LiteralPath $skill -Destination (Join-Path $skillDirectory "SKILL.md") -Force
+  $target = Join-Path $skillDirectory "SKILL.md"
+  $temp = Join-Path $skillDirectory ".SKILL.$([guid]::NewGuid().ToString('N')).tmp"
+  Copy-Item -LiteralPath $skill -Destination $temp -Force
+  Move-Item -LiteralPath $temp -Destination $target -Force
+}
+$skillDirectory = if ($manifest.skillDirectory) { [string]$manifest.skillDirectory } else { Join-Path $HOME ".codex\skills\codex-with-chatgpt" }
+foreach ($directoryName in @("references", "agents")) {
+  $backupDirectory = Join-Path $BackupPath $directoryName
+  $targetDirectory = Join-Path $skillDirectory $directoryName
+  if (Test-Path $backupDirectory) {
+    if (Test-Path $targetDirectory) { Remove-Item -LiteralPath $targetDirectory -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $skillDirectory | Out-Null
+    Copy-Item -LiteralPath $backupDirectory -Destination $targetDirectory -Recurse -Force
+  }
 }
 Write-Host "已恢复上一版：$($manifest.commit)"
 

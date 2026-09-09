@@ -18,6 +18,12 @@ export const executionRecordSchema = z.object({
   notes: z.string().optional(),
   outputId: z.number().int().positive().optional(),
   outputAvailable: z.boolean().optional(),
+  selfCheckStatus: z.enum(["PASS", "FAIL"]).optional(),
+  pageVerifyStatus: z.enum(["PASS", "FAIL", "NOT_APPLICABLE"]).optional(),
+  pageScope: z.string().max(400).optional(),
+  verificationAt: z.string().optional(),
+  modelName: z.string().max(120).optional(),
+  reasoningStrength: z.string().max(80).optional(),
 });
 
 export type ExecutionRecord = z.infer<typeof executionRecordSchema>;

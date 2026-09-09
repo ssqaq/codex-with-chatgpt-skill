@@ -19,6 +19,8 @@ export type ProtocolState =
   | "BLOCKED";
 
 export type WaitingFor = "none" | "GPT_PLAN" | "GPT_REVIEW" | "GPT_CONSENSUS" | "USER";
+export type SelfCheckStatus = "PASS" | "FAIL";
+export type PageVerifyStatus = "PASS" | "FAIL" | "NOT_APPLICABLE";
 
 export const PROTOCOL_STATES: readonly ProtocolState[] = [
   "INIT",
@@ -43,6 +45,8 @@ const CONSENSUS_EXECUTION_STATES: readonly ProtocolState[] = [
   "DONE",
 ];
 
+const VERIFICATION_REQUIRED_STATES: readonly ProtocolState[] = ["EXECUTED_LOCAL", "EXECUTED_SENT", "DONE"];
+
 export interface TaskCheckpoint {
   taskId: string;
   iteration: number;
@@ -62,6 +66,12 @@ export interface TaskCheckpoint {
   consensusRepeatedRounds?: number;
   codexConsensus?: boolean;
   chatgptConsensus?: boolean;
+  selfCheckStatus?: SelfCheckStatus;
+  pageVerifyStatus?: PageVerifyStatus;
+  pageScope?: string;
+  verificationAt?: string;
+  modelName?: string;
+  reasoningStrength?: string;
   updatedAt: string;
 }
 
@@ -192,6 +202,7 @@ const CHECKPOINT_LIMITS = {
   consensusPlan: 1200,
   consensusDisagreement: 800,
   consensusDisagreementFingerprint: 128,
+  pageScope: 400,
 } as const;
 
 function capCheckpointText(value: string | undefined, max: number): string | undefined {
@@ -263,8 +274,27 @@ export function mergeSession(previous: SavedSession | null, patch: SessionPatch)
     const consensusMode = patch.checkpoint.consensusMode ?? previous?.checkpoint?.consensusMode;
     const codexConsensus = patch.checkpoint.codexConsensus ?? previous?.checkpoint?.codexConsensus;
     const chatgptConsensus = patch.checkpoint.chatgptConsensus ?? previous?.checkpoint?.chatgptConsensus;
+    const selfCheckStatus = patch.checkpoint.selfCheckStatus ?? previous?.checkpoint?.selfCheckStatus;
+    const pageVerifyStatus = patch.checkpoint.pageVerifyStatus ?? previous?.checkpoint?.pageVerifyStatus;
+    if (selfCheckStatus !== undefined && selfCheckStatus !== "PASS" && selfCheckStatus !== "FAIL") {
+      throw new Error("self-check must be PASS or FAIL");
+    }
+    if (
+      pageVerifyStatus !== undefined &&
+      pageVerifyStatus !== "PASS" &&
+      pageVerifyStatus !== "FAIL" &&
+      pageVerifyStatus !== "NOT_APPLICABLE"
+    ) {
+      throw new Error("page-verify must be PASS, FAIL, or NOT_APPLICABLE");
+    }
     if (consensusMode && CONSENSUS_EXECUTION_STATES.includes(protocolState) && !(codexConsensus && chatgptConsensus)) {
       throw new Error("consensus confirmations are required before execution");
+    }
+    if (
+      VERIFICATION_REQUIRED_STATES.includes(protocolState) &&
+      (selfCheckStatus !== "PASS" || (pageVerifyStatus !== "PASS" && pageVerifyStatus !== "NOT_APPLICABLE"))
+    ) {
+      throw new Error("post-change verification is required before execution can finish");
     }
     checkpoint = {
       taskId,
@@ -306,6 +336,21 @@ export function mergeSession(previous: SavedSession | null, patch: SessionPatch)
       consensusRepeatedRounds,
       codexConsensus,
       chatgptConsensus,
+      selfCheckStatus,
+      pageVerifyStatus,
+      pageScope: capCheckpointText(
+        patch.checkpoint.pageScope ?? previous?.checkpoint?.pageScope,
+        CHECKPOINT_LIMITS.pageScope
+      ),
+      verificationAt: patch.checkpoint.verificationAt ?? previous?.checkpoint?.verificationAt,
+      modelName: capCheckpointText(
+        patch.checkpoint.modelName ?? previous?.checkpoint?.modelName,
+        120
+      ),
+      reasoningStrength: capCheckpointText(
+        patch.checkpoint.reasoningStrength ?? previous?.checkpoint?.reasoningStrength,
+        80
+      ),
       updatedAt: new Date().toISOString(),
     };
   }
