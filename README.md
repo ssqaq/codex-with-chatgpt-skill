@@ -38,7 +38,7 @@ Windows 在 PowerShell 运行 `scripts/install.ps1`；macOS/Linux 在终端运�
 
 连接方式已经选择过后，后面换项目会自动沿用最近一次选择，一般不会再重复询问临时地址或固定域名。
 
-核心程序仓库：[ssqaq/codex-with-chatgpt](https://github.com/ssqaq/codex-with-chatgpt)
+核心程序源码在本仓库的 `core/` 目录。以后更新只看这个仓库，不用再找别的地址。
 
 ## 适合做什么
 

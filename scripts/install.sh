@@ -3,7 +3,7 @@ set -euo pipefail
 
 CHECKOUT="${CODEX_CHECKOUT:-$HOME/codex-with-chatgpt}"
 SKILL_DIRECTORY="${CODEX_SKILL_DIRECTORY:-$HOME/.codex/skills/codex-with-chatgpt}"
-REPO_URL="https://github.com/XiaoDuoYa/codex-with-chatgpt.git"
+REPO_URL="https://github.com/ssqaq/codex-with-chatgpt-skill.git"
 
 install_macos_dependencies() {
   command -v brew >/dev/null 2>&1 || { echo "请先安装 Homebrew。" >&2; exit 1; }
@@ -39,13 +39,19 @@ else
   git clone "$REPO_URL" "$CHECKOUT"
 fi
 
-cd "$CHECKOUT"
+if [[ -f "$CHECKOUT/core/package.json" ]]; then
+  PROJECT_ROOT="$CHECKOUT/core"
+else
+  PROJECT_ROOT="$CHECKOUT"
+fi
+
+cd "$PROJECT_ROOT"
 corepack enable
 corepack pnpm install
 corepack pnpm build
 
 mkdir -p "$SKILL_DIRECTORY"
-source_skill="$CHECKOUT/skill/SKILL.md"
+source_skill="$PROJECT_ROOT/skill/SKILL.md"
 target_skill="$SKILL_DIRECTORY/SKILL.md"
 [[ -f "$source_skill" ]] || { echo "找不到 Skill 文件：$source_skill" >&2; exit 1; }
 cp "$source_skill" "$target_skill"

@@ -6,7 +6,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$repoUrl = "https://github.com/XiaoDuoYa/codex-with-chatgpt.git"
+$repoUrl = "https://github.com/ssqaq/codex-with-chatgpt-skill.git"
 
 function Has-Command([string]$Name) {
   return $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
@@ -38,8 +38,14 @@ if (Test-Path (Join-Path $Checkout ".git")) {
   git clone $repoUrl $Checkout
 }
 
+$projectRoot = if (Test-Path (Join-Path $Checkout "core\package.json")) {
+  Join-Path $Checkout "core"
+} else {
+  $Checkout
+}
+
 if (-not $SkipBuild) {
-  Push-Location $Checkout
+  Push-Location $projectRoot
   try {
     corepack enable
     corepack pnpm install
@@ -50,7 +56,7 @@ if (-not $SkipBuild) {
 }
 
 New-Item -ItemType Directory -Force -Path $SkillDirectory | Out-Null
-$sourceSkill = Join-Path $Checkout "skill\SKILL.md"
+$sourceSkill = Join-Path $projectRoot "skill\SKILL.md"
 $targetSkill = Join-Path $SkillDirectory "SKILL.md"
 if (-not (Test-Path $sourceSkill)) { throw "找不到 Skill 文件：$sourceSkill" }
 Copy-Item -LiteralPath $sourceSkill -Destination $targetSkill -Force
