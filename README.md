@@ -40,6 +40,10 @@ Windows 在 PowerShell 运行 `scripts/install.ps1`；macOS/Linux 在终端运�
 
 核心程序源码在本仓库的 `core/` 目录。以后更新只看这个仓库，不用再找别的地址。
 
+## 自动检查和发布
+
+每次提交或发起合并请求，GitHub 会自动安装依赖、跑测试、做类型检查和构建。修改根目录 `VERSION` 并提交后，GitHub 会自动创建对应标签和 Release。
+
 ## 适合做什么
 
 - 开发新功能

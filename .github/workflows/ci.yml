@@ -1,0 +1,43 @@
+name: 自动测试
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+      - name: 启用 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: core/pnpm-lock.yaml
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+      - name: 类型检查
+        run: pnpm typecheck
+      - name: 单元和集成测试
+        run: pnpm test
+      - name: 构建
+        run: pnpm build
+      - name: 检查安装脚本
+        working-directory: .
+        run: |
+          bash -n scripts/install.sh scripts/update.sh scripts/uninstall.sh scripts/check-version.sh
+          pwsh -NoProfile -Command '$errors=@(); foreach ($p in Get-ChildItem scripts -Filter "*.ps1") { $t=$null; $e=$null; [System.Management.Automation.Language.Parser]::ParseFile($p.FullName,[ref]$t,[ref]$e) | Out-Null; if ($e.Count) { $errors += $p.Name } }; if ($errors.Count) { throw ($errors -join ", ") }'
