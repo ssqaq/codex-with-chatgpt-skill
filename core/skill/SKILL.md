@@ -1,21 +1,40 @@
 ---
 name: codex-with-chatgpt
 description: >
-  Use ChatGPT (web) as the planning and review brain for Codex coding sessions,
-  while Codex keeps full execution ownership. Use when the user says
-  "使用 Codex with ChatGPT ..." / "Set up Codex with ChatGPT" / "用 ChatGPT 规划",
-  when they ask to connect ChatGPT to the current workspace, disconnect it,
-  or run a task through the ChatGPT planning loop.
+  让 ChatGPT 负责想方案、检查结果，Codex 负责改文件、运行命令和测试。
+  当用户说“用 ChatGPT 帮我规划并完成修改”“使用 Codex with ChatGPT”，
+  或需要把 ChatGPT 连接到当前项目时使用。适合代码开发、报错排查、功能实现和结果复核。
 ---
 
 # Codex with ChatGPT
 
-## Recommended ChatGPT model
+## 大白话说明
 
-For the connected in-app ChatGPT conversation, prefer **GPT-5.6 Sol** with
-**Pro (highest) reasoning intensity** when the account exposes it. If it is not
-available, use the highest model actually shown in the model picker and report
-that fact; never claim a model that is not present.
+这个 Skill 就像一个“ChatGPT 参谋”：
+
+- ChatGPT 负责分析问题、想办法、检查结果。
+- Codex 负责真正改文件、运行命令和测试。
+- 这个 Skill 负责把两边连起来，让它们一起完成任务。
+
+## 最简单的用法
+
+在 Codex 会话里直接说：
+
+> 用 ChatGPT 帮我规划这个功能并完成修改。
+
+不需要输入 `/skill`。
+
+## 推荐模型
+
+在内置 ChatGPT 会话中，优先选择 **GPT-5.6 Sol**，思考强度选择 **Pro（最高）**。如果当前账号看不到这个模型，使用列表里实际可用的最高模型，并如实告诉用户。
+
+## 注意
+
+这个 Skill 只让 ChatGPT 读取当前项目并参与规划和检查，实际文件修改仍由 Codex 完成。
+
+## 统一名称
+
+连接器名称统一使用 `Codex with ChatGPT · <项目名>`。创建或连接时必须沿用这个名称，不要使用 `1`、`test` 等临时名称，这样后续每个项目都能准确找到自己的连接。
 
 ChatGPT thinks. Codex works.
 
@@ -204,25 +223,55 @@ Inside the checkout directory (see Locations):
 
 1. `git pull --ff-only` (if it fails due to local edits: `git stash && git pull --ff-only`).
 2. `corepack pnpm install && corepack pnpm build`.
-3. Re-install the Skill: copy `skill/SKILL.md` to
+3. Re-install the Skill: copy the repository's canonical Skill file to
    `~/.codex/skills/codex-with-chatgpt/SKILL.md`, then fix the "checkout lives at:"
-   line in the copy to the actual checkout path.
+   line in the copy to the actual checkout path. In this public repository the
+   canonical file is `<checkout>/SKILL.md`; older checkouts may keep it at
+   `<checkout>/core/skill/SKILL.md`. Use whichever file exists, preferring the
+   root file, and fail clearly if neither exists.
 4. `c2c sandbox-allow --json` (so existing installs pick up the sandbox allowlist),
    then `c2c restart -w <workspace>` so the bridge runs the new code, then
    `c2c update-check --force --json` to refresh the cache (should now report up to date).
 5. Tell the user "✓ 已更新到最新版本" — then resume whatever task triggered this.
-   (The updated SKILL.md takes effect from the next Codex session; that's expected.)
+   A newly started Codex task loads the updated `SKILL.md` automatically.
 
-## Connection choice (remembered across workspaces)
+## Workflow: sync an already-open Codex task after a Skill update
+
+Updating the local file cannot rewrite the instructions already loaded by a
+running Codex task. When the user asks to sync an old/open task, keep that
+same task and its existing ChatGPT conversation. Do not create a new task,
+new chat, connector, or pairing.
+
+1. Copy the freshly installed Skill version into the task's local Skill path
+   (the update workflow above already does this).
+2. Use the Codex app's `send_message_to_thread` for the existing task and send
+   this short message, filling in the real version and task id:
+
+```
+Skill 已更新到 <version>。请在当前旧会话中重新读取本机
+`~/.codex/skills/codex-with-chatgpt/SKILL.md` 和当前工作区状态；继续使用
+原会话、原连接器，不新建会话、不重复配对。确认已加载最新规则后，从当前
+任务的下一步继续。历史消息不用重写。
+```
+
+3. Wait for that same task to acknowledge the update, then continue its
+   existing checkpoint/protocol state. If it is in the middle of a turn,
+   queue the message and do not interrupt or restart the turn.
+4. Verify the task still names the same workspace and connector. If the old
+   task is archived or no longer exists, report that fact; do not silently
+   create a replacement task.
+
+This only changes how the next turn behaves. Previous replies in the old
+conversation remain unchanged, which is expected.
+
+## Connection choice (once per workspace)
 
 Ask this **before** the public address exists (`c2c setup` / first `doctor --fix`
 that starts a tunnel). Do not mention tunnels, wrangler, DNS, or hostnames.
 Speak only of 临时地址 / 固定域名 / 登录 Cloudflare.
 
 1. `c2c tunnel status -w <workspace> --json`
-2. If `needsChoice` is false: do not ask again. Newer C2C versions automatically reuse
-   the most recently saved connection choice on this machine, so a new project usually
-   continues without showing this question again.
+2. If `needsChoice` is false: do not ask again.
 3. If `needsChoice` is true: tell the user exactly `userPrompt` and wait.
    - 没有账号 / 没有域名 / 临时 / 不用 →
      `c2c tunnel choose -w <ws> --mode quick --json`

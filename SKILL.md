@@ -223,9 +223,12 @@ Inside the checkout directory (see Locations):
 
 1. `git pull --ff-only` (if it fails due to local edits: `git stash && git pull --ff-only`).
 2. `corepack pnpm install && corepack pnpm build`.
-3. Re-install the Skill: copy `skill/SKILL.md` to
+3. Re-install the Skill: copy the repository's canonical Skill file to
    `~/.codex/skills/codex-with-chatgpt/SKILL.md`, then fix the "checkout lives at:"
-   line in the copy to the actual checkout path.
+   line in the copy to the actual checkout path. In this public repository the
+   canonical file is `<checkout>/SKILL.md`; older checkouts may keep it at
+   `<checkout>/core/skill/SKILL.md`. Use whichever file exists, preferring the
+   root file, and fail clearly if neither exists.
 4. `c2c sandbox-allow --json` (so existing installs pick up the sandbox allowlist),
    then `c2c restart -w <workspace>` so the bridge runs the new code, then
    `c2c update-check --force --json` to refresh the cache (should now report up to date).
