@@ -78,6 +78,7 @@ Windows 在 PowerShell 运行 `scripts/install.ps1`；macOS/Linux 在终端运�
 - 更新：Windows 运行 `scripts/update.ps1`；macOS/Linux 运行 `bash scripts/update.sh`。
 - 检查版本：Windows 运行 `scripts/check-version.ps1`；macOS/Linux 运行 `bash scripts/check-version.sh`。
 - 版本检查会直接显示：本机版本、GitHub 最新版本、是否需要更新。
+- 如果暂时连不上 GitHub，会明确显示“GitHub 最新版本：暂时无法获取”和“是否需要更新：无法确认”；这只表示本次没查到，先继续使用本机版本，之后会自动重试。
 - 更新前会自动备份；更新失败会自动恢复。为保护未提交代码，检测到工作区有改动时会先停止更新，不会强制覆盖。需要手动操作时，运行 `scripts/backup.ps1` / `scripts/backup.sh` 备份，运行 `scripts/rollback.ps1` / `scripts/rollback.sh` 回滚。
 - 卸载 Skill：Windows 运行 `scripts/uninstall.ps1`；macOS/Linux 运行 `bash scripts/uninstall.sh`。默认只移除 Skill，项目目录会保留。
 

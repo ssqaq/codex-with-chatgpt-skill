@@ -47,7 +47,13 @@ describe("c2c record", () => {
         "--output",
         "tests passed",
         "--exit-code",
-        "1",
+        "0",
+        "--self-check",
+        "PASS",
+        "--page-verify",
+        "NOT_APPLICABLE",
+        "--verification-at",
+        "2026-01-01T00:00:00.000Z",
       ]);
 
       expect(result.status).toBe(0);
@@ -55,7 +61,7 @@ describe("c2c record", () => {
         expect.objectContaining({ taskId: "c2c_test", iteration: 2, changedFiles: 3 }),
       ]);
       expect(listExecutionOutputs(workspace.id)).toEqual([
-        expect.objectContaining({ command: "pnpm test", exitCode: 1, iteration: 2 }),
+        expect.objectContaining({ command: "pnpm test", exitCode: 0, iteration: 2 }),
       ]);
     });
   });
@@ -66,6 +72,70 @@ describe("c2c record", () => {
 
       expect(result.status).toBe(1);
       expect(readExecutionRecords(workspace.id)).toEqual([]);
+    });
+  });
+
+  it("requires the self-check, page verification, and verification timestamp gate", () => {
+    withRecordEnvironment((root, workspace) => {
+      const result = runRecord(root, ["--iteration", "1"]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr + result.stdout).toMatch(/self-check is required/i);
+      expect(readExecutionRecords(workspace.id)).toEqual([]);
+    });
+  });
+
+  it("rejects invalid statuses and non-ISO verification times before saving output", () => {
+    withRecordEnvironment((root, workspace) => {
+      const result = runRecord(root, [
+        "--iteration",
+        "1",
+        "--self-check",
+        "PASS",
+        "--page-verify",
+        "NOT_APPLICABLE",
+        "--verification-at",
+        "tomorrow",
+        "--exit-status",
+        "unknown",
+        "--command",
+        "pnpm test",
+        "--output",
+        "tests passed",
+      ]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr + result.stdout).toMatch(/exit-status must be/i);
+      expect(readExecutionRecords(workspace.id)).toEqual([]);
+      expect(listExecutionOutputs(workspace.id)).toEqual([]);
+    });
+  });
+
+  it("requires a successful command to report exit code zero", () => {
+    withRecordEnvironment((root, workspace) => {
+      const result = runRecord(root, [
+        "--iteration",
+        "1",
+        "--exit-status",
+        "ok",
+        "--self-check",
+        "PASS",
+        "--page-verify",
+        "NOT_APPLICABLE",
+        "--verification-at",
+        "2026-01-01T00:00:00.000Z",
+        "--command",
+        "pnpm test",
+        "--output",
+        "failed",
+        "--exit-code",
+        "1",
+      ]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr + result.stdout).toMatch(/exit-status ok requires/i);
+      expect(readExecutionRecords(workspace.id)).toEqual([]);
+      expect(listExecutionOutputs(workspace.id)).toEqual([]);
     });
   });
 

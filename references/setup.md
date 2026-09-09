@@ -185,6 +185,20 @@ The version result must be shown as three plain-language fields: 本机版本、
 GitHub 最新版本、是否需要更新。 Exit code 10 means an update is available;
 it is a status result, not a crash.
 
+If GitHub cannot be reached (for example, the machine is offline), do not say
+that the local copy is up to date. Show the result plainly:
+
+```text
+本机版本：<local version>
+GitHub 最新版本：暂时无法获取
+是否需要更新：无法确认
+处理：暂时继续使用本机版本，稍后自动重试
+```
+
+This is a check that could not be completed, not a failed update and not an
+indication that the local copy is current. Do not start an update until a
+later check can read the GitHub version.
+
 ## Workflow: update（"更新 Codex with ChatGPT"，or triggered by the daily check）
 
 Inside the checkout directory (see Locations):

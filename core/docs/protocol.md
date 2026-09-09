@@ -275,7 +275,7 @@ If status is restricted, ignore it and review from git_diff.
 ```
 
 Before sending EXECUTED, Codex records the iteration:
-`c2c record --task c2c_f81a --iteration 1 --changed-files ... --tests ... --exit-status ok`
+`c2c record --task c2c_f81a --iteration 1 --changed-files ... --tests ... --exit-status ok --self-check PASS --page-verify NOT_APPLICABLE --verification-at "<ISO timestamp>"`
 and, when a test/build/lint/typecheck was run, `--command` plus `--output-file`.
 ChatGPT reads metadata via `execution_summary` / `test_status`. Command output
 is a separate opt-in: `execution_output` (`list` then `read`). Codex nominates

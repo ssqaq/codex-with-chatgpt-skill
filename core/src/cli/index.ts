@@ -47,6 +47,7 @@ import {
   clearChatPointer,
   mergeSession,
   readSession,
+  readSessionResult,
   resolveConversation,
   writeSession,
   PROTOCOL_STATES,
@@ -856,6 +857,19 @@ function runGit(args: string[]): { ok: boolean; stdout: string } {
   return { ok: result.status === 0, stdout: (result.stdout ?? "").trim() };
 }
 
+function parseVerificationTimestamp(value: string | undefined): string {
+  const normalized = value?.trim() ?? "";
+  // Keep the wire format unambiguous: date, time, and an explicit UTC/offset
+  // designator. Date.parse alone accepts locale-ish values such as "1/2/3".
+  if (
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})$/.test(normalized) ||
+    Number.isNaN(Date.parse(normalized))
+  ) {
+    throw new Error("verification-at is required and must be an ISO timestamp (for example 2026-01-01T00:00:00.000Z)");
+  }
+  return normalized;
+}
+
 function versionTuple(value: string): [number, number, number] {
   const parts = value.match(/\d+/g)?.slice(0, 3).map(Number) ?? [];
   return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
@@ -892,7 +906,13 @@ program
   .action(async (opts: { force: boolean; json: boolean }) => {
     const file = path.join(getStateDir(), "update-check.json");
     const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in local tz
-    let last: { date?: string; updateAvailable?: boolean; latestVersion?: string | null; remoteCommit?: string } = {};
+    let last: {
+      date?: string;
+      updateAvailable?: boolean;
+      latestConfirmed?: boolean;
+      latestVersion?: string | null;
+      remoteCommit?: string;
+    } = {};
     try {
       last = JSON.parse(fs.readFileSync(file, "utf8")) as typeof last;
     } catch {
@@ -902,6 +922,7 @@ program
     const emit = (data: {
       checked: boolean;
       updateAvailable: boolean;
+      latestConfirmed: boolean;
       localCommit?: string;
       remoteCommit?: string;
       latestVersion?: string | null;
@@ -910,18 +931,19 @@ program
       if (opts.json) {
         say(
           JSON.stringify({
+            ...data,
             ok: true,
             version: VERSION,
             localVersion: VERSION,
             githubLatestVersion: data.latestVersion ?? null,
             needsUpdate: data.updateAvailable,
-            ...data,
+            latestStatus: data.latestConfirmed ? "confirmed" : "unconfirmed",
           })
         );
       } else {
         say(`本机版本：${VERSION}`);
-        say(`GitHub 最新版本：${data.latestVersion ?? "无法获取（请稍后重试）"}`);
-        say(`是否需要更新：${data.updateAvailable ? "是" : "否"}`);
+        say(`GitHub 最新版本：${data.latestVersion ?? "暂时无法获取"}`);
+        say(`是否需要更新：${data.latestConfirmed ? (data.updateAvailable ? "是" : "否") : "未确认最新"}`);
         if (data.note) say(data.note);
       }
     };
@@ -930,6 +952,7 @@ program
       emit({
         checked: false,
         updateAvailable: last.updateAvailable ?? false,
+        latestConfirmed: last.latestConfirmed ?? false,
         latestVersion: last.latestVersion ?? null,
         remoteCommit: last.remoteCommit,
         note: "今天已检查过更新。",
@@ -942,15 +965,21 @@ program
     if (!local.ok || !remote.ok || !remote.stdout) {
       // Offline or not a git checkout: skip quietly and retry tomorrow-ish (do not
       // record the date so a transient failure does not suppress the daily check).
-      emit({ checked: false, updateAvailable: false, latestVersion: null, note: "无法检查更新（离线或非 git 安装），已跳过。" });
+      emit({
+        checked: false,
+        updateAvailable: false,
+        latestConfirmed: false,
+        latestVersion: null,
+        note: "无法连接 GitHub，本次未确认最新版本，暂时继续使用本机版本。",
+      });
       return;
     }
     const remoteCommit = remote.stdout.split(/\s/)[0];
     const latestVersion = await latestGithubRelease();
     const updateAvailable = remoteCommit !== local.stdout || (latestVersion !== null && compareVersions(VERSION, latestVersion) < 0);
     fs.mkdirSync(getStateDir(), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ date: today, updateAvailable, remoteCommit, latestVersion }), { mode: 0o600 });
-    emit({ checked: true, updateAvailable, localCommit: local.stdout, remoteCommit, latestVersion });
+    fs.writeFileSync(file, JSON.stringify({ date: today, updateAvailable, latestConfirmed: true, remoteCommit, latestVersion }), { mode: 0o600 });
+    emit({ checked: true, updateAvailable, latestConfirmed: true, localCommit: local.stdout, remoteCommit, latestVersion });
   });
 
 // ---------------------------------------------------------------- session (ChatGPT conversation / Project memory)
@@ -966,7 +995,24 @@ session
   .option("--json", "machine-readable output", false)
   .action((opts: { workspace?: string; json: boolean }) => {
     const workspace = new Workspace(resolveWorkspace(opts.workspace));
-    const saved = readSession(workspace.id);
+    const read = readSessionResult(workspace.id);
+    if (read.status === "corrupt") {
+      const payload = {
+        ok: false,
+        status: "corrupt",
+        error: read.message,
+        sessionPath: read.sessionPath,
+        backupPath: read.backupPath,
+      };
+      if (opts.json) say(JSON.stringify(payload));
+      else {
+        cross("ChatGPT 会话记录已损坏，已自动保留备份；不会静默创建新会话。");
+        say(`备份：${read.backupPath}`);
+      }
+      process.exitCode = 1;
+      return;
+    }
+    const saved = read.session;
     const conversation = resolveConversation(saved);
     if (opts.json) say(JSON.stringify({ ok: true, session: saved, conversation }));
     else if (!saved) {
@@ -1257,6 +1303,30 @@ program
       exitCode?: number;
     }) => {
       const workspace = new Workspace(resolveWorkspace(opts.workspace));
+      const exitStatus = opts.exitStatus.trim().toLowerCase();
+      if (!(["ok", "failed", "blocked"] as const).includes(exitStatus as "ok" | "failed" | "blocked")) {
+        throw new Error("exit-status must be ok, failed, or blocked");
+      }
+      const selfCheck = opts.selfCheck?.trim().toUpperCase();
+      if (selfCheck !== "PASS" && selfCheck !== "FAIL") {
+        throw new Error("self-check is required and must be PASS or FAIL");
+      }
+      const pageVerify = opts.pageVerify?.trim().toUpperCase();
+      if (pageVerify !== "PASS" && pageVerify !== "FAIL" && pageVerify !== "NOT_APPLICABLE") {
+        throw new Error("page-verify is required and must be PASS, FAIL, or NOT_APPLICABLE");
+      }
+      if (exitStatus === "ok" && (selfCheck !== "PASS" || (pageVerify !== "PASS" && pageVerify !== "NOT_APPLICABLE"))) {
+        throw new Error("successful records require SELF_CHECK: PASS and PAGE_VERIFY: PASS or NOT_APPLICABLE");
+      }
+      if (opts.exitCode !== undefined) {
+        if (exitStatus === "ok" && opts.exitCode !== 0) {
+          throw new Error("exit-status ok requires --exit-code 0");
+        }
+        if (exitStatus === "failed" && opts.exitCode === 0) {
+          throw new Error("exit-status failed requires a non-zero --exit-code");
+        }
+      }
+      const verificationAt = parseVerificationTimestamp(opts.verificationAt);
       const changed = parseChangedFiles(opts.changedFiles);
       let outputId: number | undefined;
       let outputAvailable = false;
@@ -1280,13 +1350,13 @@ program
         iteration: opts.iteration,
         changedFiles: changed,
         tests: opts.tests ?? null,
-        exitStatus: opts.exitStatus,
+        exitStatus,
         timestamp: new Date().toISOString(),
         notes: opts.notes?.slice(0, 400),
-        selfCheckStatus: opts.selfCheck?.trim().toUpperCase() as "PASS" | "FAIL" | undefined,
-        pageVerifyStatus: opts.pageVerify?.trim().toUpperCase() as "PASS" | "FAIL" | "NOT_APPLICABLE" | undefined,
+        selfCheckStatus: selfCheck,
+        pageVerifyStatus: pageVerify,
         pageScope: opts.pageScope?.slice(0, 400),
-        verificationAt: opts.verificationAt,
+        verificationAt,
         modelName: opts.model?.slice(0, 120),
         reasoningStrength: opts.reasoningStrength?.slice(0, 80),
         outputId,

@@ -11,6 +11,23 @@ Do not invent `STATE: RESUME`. If the original chat is gone, send HANDOFF.
 All control messages start with `[C2C]`. Keep Codex→ChatGPT messages under 1 KB.
 ChatGPT's replies are expected to be substantive (see step 3). Docs: `docs/protocol.md`.
 
+## 普通任务阶段进度回显
+
+没有触发纯文字多轮共识评审时，Codex 仍要在进入新阶段时回显一次进度，避免用户
+误以为任务卡住。每次回显使用短格式：
+
+```text
+当前阶段：正在分析 / 正在规划 / 正在修改 / 正在测试 / 正在复核 / 正在检查页面 / 已完成
+任务摘要：<一句话说明正在处理什么>
+当前结果：<已完成的结果，或“进行中”>
+下一步：<下一步会做什么>
+```
+
+通常按“分析 → 规划 → 修改 → 测试 → 复核 → 页面检查（适用时）→ 完成”推进。
+任何测试、复核或页面检查失败，都必须回到对应阶段修复并重新验证；在验证通过前
+不得回显“已完成”，也不得发送同步或发布回执。多轮评审继续使用本文件后面的轮次
+格式，不与普通阶段计数混用。
+
 0. `c2c tunnel status -w <workspace> --json`. If `needsChoice`, follow
    **Connection choice** first (existing installs: ask once, then remember).
    Then `c2c doctor -w <workspace> --json` (auto-repairs). **Doctor gate:** if local
@@ -95,7 +112,7 @@ Produce a C2C PLAN message.
    检查；不涉及页面时记录 `PAGE_VERIFY: NOT_APPLICABLE`。检查失败就先修复并重做，
    不得发送 `EXECUTED` 或同步 GitHub。通过后记录执行结果，供 ChatGPT 通过 MCP 读取。
    Metadata always:
-   `c2c record -w <ws> --task c2c_f81a --iteration 1 --changed-files "src/a.ts,src/b.ts" --tests "27 passed" --exit-status ok`
+   `c2c record -w <ws> --task c2c_f81a --iteration 1 --changed-files "src/a.ts,src/b.ts" --tests "27 passed" --exit-status ok --self-check PASS --page-verify NOT_APPLICABLE --verification-at "<ISO timestamp>"`
    If this iteration ran a **test / build / lint / typecheck** command, also
    pass that command's output. Write stdout/stderr to a local temp file first,
    then:

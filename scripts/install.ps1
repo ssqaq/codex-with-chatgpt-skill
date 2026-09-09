@@ -17,10 +17,24 @@ function Install-Winget([string]$Id, [string]$Label) {
   winget install --id $Id --exact --source winget --accept-source-agreements --accept-package-agreements
 }
 
+# winget updates the user/machine PATH for future processes. Re-read both
+# scopes into this PowerShell process so the rest of this one-click install can
+# use newly installed tools without asking the user to open a second window.
+function Refresh-ProcessPath {
+  $scopes = @(
+    [Environment]::GetEnvironmentVariable("Path", "Machine"),
+    [Environment]::GetEnvironmentVariable("Path", "User")
+  )
+  $entries = @($env:Path -split ';') + @($scopes | ForEach-Object { if ($_){ $_ -split ';' } })
+  $env:Path = (($entries | Where-Object { $_ -and $_.Trim() } | Select-Object -Unique) -join ';')
+}
+
 if (-not (Has-Command "winget")) { throw "找不到 winget，请先安装 App Installer。" }
-if (-not (Has-Command "git")) { Install-Winget "Git.Git" "Git" }
-if (-not (Has-Command "node")) { Install-Winget "OpenJS.NodeJS.LTS" "Node.js" }
-if (-not (Has-Command "cloudflared")) { Install-Winget "Cloudflare.cloudflared" "cloudflared" }
+if (-not (Has-Command "git")) { Install-Winget "Git.Git" "Git"; Refresh-ProcessPath }
+if (-not (Has-Command "node")) { Install-Winget "OpenJS.NodeJS.LTS" "Node.js"; Refresh-ProcessPath }
+if (-not (Has-Command "cloudflared")) { Install-Winget "Cloudflare.cloudflared" "cloudflared"; Refresh-ProcessPath }
+
+Refresh-ProcessPath
 
 if (-not (Has-Command "git") -or -not (Has-Command "node") -or -not (Has-Command "cloudflared")) {
   throw "安装完成但当前窗口还没有刷新 PATH，请关闭后重新打开 PowerShell 再运行此脚本。"

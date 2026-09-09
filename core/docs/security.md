@@ -48,11 +48,11 @@ files 0600. Named-hostname preference and tunnel metadata live there too
 (`tunnels/<workspaceId>.json`) — never in the project. Only SHA-256 hashes of
 tokens are persisted — a stolen state file does not yield usable bearer tokens.
 
-**V1 limitation**: client registrations and token hashes are file-based rather
-than OS-keychain-based. Raw tokens are never written anywhere. Keychain
-integration is a V2 item.
+**Current implementation limitation**: client registrations and token hashes
+are file-based rather than OS-keychain-based. Raw tokens are never written
+anywhere. Keychain integration remains a future improvement.
 
-## What ChatGPT can never do (V1)
+## What ChatGPT can never do (current implementation)
 
 Write files, delete files, run shell commands, commit, install packages —
 these tools do not exist on the server, so no prompt injection, scope bug, or

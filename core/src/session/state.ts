@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
-import { getStateDir, readJsonIfExists, writeSecureJson } from "../config/paths.js";
+import { getStateDir, writeSecureJson } from "../config/paths.js";
 
 export type ConversationMode = "long-chat" | "project";
 
@@ -112,12 +112,98 @@ export interface ConversationView {
   reuseSavedChat: boolean;
 }
 
+/** A saved session could not be parsed or no longer has the required shape. */
+export class CorruptSessionError extends Error {
+  readonly code = "SESSION_CORRUPT" as const;
+  readonly sessionPath: string;
+  readonly backupPath: string;
+
+  constructor(sessionPath: string, backupPath: string, reason: string) {
+    super(`Saved ChatGPT session is corrupt (${reason}). A backup was kept at ${backupPath}.`);
+    this.name = "CorruptSessionError";
+    this.sessionPath = sessionPath;
+    this.backupPath = backupPath;
+  }
+}
+
 export function sessionFile(workspaceId: string): string {
   return path.join(getStateDir(), "sessions", `${workspaceId}.json`);
 }
 
+function backupCorruptSession(file: string, workspaceId: string): string {
+  const directory = path.join(getStateDir(), "sessions", "corrupt");
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const safeWorkspaceId = workspaceId.replace(/[^A-Za-z0-9._-]/g, "_");
+  const base = `${safeWorkspaceId}.${Date.now()}.${process.pid}`;
+  let backup = path.join(directory, `${base}.json`);
+  let suffix = 0;
+  while (fs.existsSync(backup)) {
+    suffix += 1;
+    backup = path.join(directory, `${base}.${suffix}.json`);
+  }
+  fs.copyFileSync(file, backup);
+  try {
+    fs.chmodSync(backup, 0o600);
+  } catch {
+    // best effort on platforms without chmod semantics
+  }
+  return backup;
+}
+
+function corruptSession(file: string, workspaceId: string, reason: string): never {
+  const backup = backupCorruptSession(file, workspaceId);
+  throw new CorruptSessionError(file, backup, reason);
+}
+
+export type SessionReadResult =
+  | { status: "missing"; session: null }
+  | { status: "ok"; session: SavedSession }
+  | { status: "corrupt"; session: null; backupPath: string; sessionPath: string; message: string };
+
+/** Read a session while exposing corruption as an explicit status for CLI/JSON callers. */
+export function readSessionResult(workspaceId: string): SessionReadResult {
+  const file = sessionFile(workspaceId);
+  if (!fs.existsSync(file)) return { status: "missing", session: null };
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      corruptSession(file, workspaceId, "expected a JSON object");
+    }
+    const candidate = parsed as Partial<SavedSession>;
+    if (typeof candidate.savedAt !== "string" || !candidate.savedAt.trim()) {
+      corruptSession(file, workspaceId, "missing savedAt");
+    }
+    return { status: "ok", session: parsed as SavedSession };
+  } catch (error) {
+    if (error instanceof CorruptSessionError) {
+      return {
+        status: "corrupt",
+        session: null,
+        backupPath: error.backupPath,
+        sessionPath: error.sessionPath,
+        message: error.message,
+      };
+    }
+    if (error instanceof SyntaxError) {
+      const backup = backupCorruptSession(file, workspaceId);
+      return {
+        status: "corrupt",
+        session: null,
+        backupPath: backup,
+        sessionPath: file,
+        message: `Saved ChatGPT session is corrupt (invalid JSON). A backup was kept at ${backup}.`,
+      };
+    }
+    throw error;
+  }
+}
+
 export function readSession(workspaceId: string): SavedSession | null {
-  return readJsonIfExists<SavedSession>(sessionFile(workspaceId));
+  const result = readSessionResult(workspaceId);
+  if (result.status === "corrupt") {
+    throw new CorruptSessionError(result.sessionPath, result.backupPath, "session file is unreadable; restore from the backup");
+  }
+  return result.session;
 }
 
 export function writeSession(workspaceId: string, session: SavedSession): SavedSession {

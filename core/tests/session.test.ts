@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   clearChatPointer,
@@ -5,7 +7,9 @@ import {
   normalizeProjectUrl,
   projectIdFromUrl,
   readSession,
+  readSessionResult,
   resolveConversation,
+  sessionFile,
   writeSession,
 } from "../src/session/state.js";
 import { cleanup, makeTmpDir } from "./helpers.js";
@@ -352,5 +356,31 @@ describe("clearChatPointer", () => {
     });
     expect(clearChatPointer("def456def456")).toEqual({ cleared: true, keptProject: false });
     expect(readSession("def456def456")).toBeNull();
+  });
+});
+
+describe("corrupt saved sessions", () => {
+  const dirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of dirs) cleanup(dir);
+    dirs.length = 0;
+    delete process.env.C2C_STATE_DIR;
+  });
+
+  it("keeps a backup and reports corrupt instead of treating the file as a new session", () => {
+    const dir = makeTmpDir("session-corrupt");
+    dirs.push(dir);
+    process.env.C2C_STATE_DIR = dir;
+    const file = sessionFile("corrupt123");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "{ this is not valid JSON", "utf8");
+
+    const result = readSessionResult("corrupt123");
+    expect(result.status).toBe("corrupt");
+    if (result.status !== "corrupt") throw new Error("expected a corrupt result");
+    expect(fs.existsSync(result.backupPath)).toBe(true);
+    expect(fs.readFileSync(result.backupPath, "utf8")).toContain("this is not valid JSON");
+    expect(() => readSession("corrupt123")).toThrow(/session is corrupt/i);
   });
 });

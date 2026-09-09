@@ -33,7 +33,8 @@
 - **ChatGPT thinks. Codex works.** The bridge never re-implements a coding harness.
 - **Computer Use = control plane**: tiny `[C2C]` state messages (< 1 KB).
 - **MCP = data plane**: ChatGPT pulls files/diffs/search results and workspace images itself.
-- **Read-only by design**: no write/exec tools exist in V1 at all.
+- **Read-only by design**: no write/exec tools exist in the current
+  implementation.
 - **Workspace is the security boundary**: one bridge = one workspace = one token audience.
 
 ## Components (src/)
