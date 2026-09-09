@@ -11,6 +11,24 @@ Do not invent `STATE: RESUME`. If the original chat is gone, send HANDOFF.
 All control messages start with `[C2C]`. Keep Codex→ChatGPT messages under 1 KB.
 ChatGPT's replies are expected to be substantive (see step 3). Docs: `docs/protocol.md`.
 
+## 计划模式卡住恢复
+
+普通编码任务不等待 Codex 客户端的计划模式按钮，也不把 `<proposed_plan>` 当成
+执行完成。若回复只包含 `<proposed_plan>`，或连续两轮没有进入 `STATE: PLAN`、
+`STATE: EXECUTED` 等正常状态，Codex 显示：
+
+```text
+当前会话处于只出方案模式，自动切换到普通执行流程。
+```
+
+随后保留当前方案摘要、工作区、连接器和旧会话历史，在同一工作区和连接器中启动
+普通执行续接；当前任务无法切换时，创建普通执行任务并发送 HANDOFF。不要编辑
+`state_5.sqlite`、历史 JSONL 或旧消息，也不要要求用户切换顶部模式。普通执行从
+修改、测试、复核和页面检查开始，不能再次发送计划包装标签。
+
+多轮共识是独立流程：用户明确要求多轮评审时，仍需双方返回 `CONSENSUS` 后才允许
+修改文件。计划模式恢复只解决客户端停在计划界面的情况。
+
 ## 普通任务阶段进度回显
 
 没有触发纯文字多轮共识评审时，Codex 仍要在进入新阶段时回显一次进度，避免用户

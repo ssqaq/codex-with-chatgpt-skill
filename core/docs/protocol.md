@@ -63,6 +63,16 @@ just to resume.
 Every control message starts with `[C2C]` and key-value headers, then sections.
 Keep messages < 1 KB. No diffs, no logs, no file bodies.
 
+### Plan-mode fallback
+
+The C2C protocol does not require the Codex client to be in its UI plan mode.
+If the client displays a raw `<proposed_plan>` wrapper or produces only plan-mode
+output for two consecutive checks, Codex must preserve the current summary,
+workspace, connector, and history, then continue in a normal execution task. If
+the current task cannot switch, send a HANDOFF to a normal task in the same
+workspace and with the same connector. Never edit Codex SQLite/JSONL history and
+never wait for the user to toggle a top-bar mode button.
+
 ### INIT (Codex → ChatGPT)
 
 ```
