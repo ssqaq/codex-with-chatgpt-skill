@@ -13,7 +13,10 @@ export type WorkspaceErrorCode =
   | "NOT_A_FILE"
   | "NOT_A_DIRECTORY"
   | "BINARY_FILE"
-  | "FILE_TOO_LARGE";
+  | "FILE_TOO_LARGE"
+  | "UNSUPPORTED_IMAGE_FORMAT"
+  | "INVALID_IMAGE"
+  | "IMAGE_TOO_LARGE";
 
 export class WorkspaceError extends Error {
   constructor(
@@ -38,6 +41,13 @@ export interface ReadFileResult {
   remainingLines: number;
   nextStartLine: number | null;
   content: string;
+}
+
+export interface ReadImageResult {
+  path: string;
+  sizeBytes: number;
+  mimeType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+  dataBase64: string;
 }
 
 export interface DirEntry {
@@ -80,6 +90,34 @@ function stringRecord(value: unknown): Record<string, string> {
 const DEFAULT_MAX_LINES = 400;
 const HARD_MAX_LINES = 2000;
 const DEFAULT_MAX_BYTES = 256 * 1024;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+type ImageMimeType = ReadImageResult["mimeType"];
+
+const IMAGE_MIME_BY_EXTENSION: Record<string, ImageMimeType> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+};
+
+function hasPrefix(data: Buffer, prefix: number[]): boolean {
+  return data.length >= prefix.length && data.subarray(0, prefix.length).equals(Buffer.from(prefix));
+}
+
+function imageSignatureMatches(mimeType: ImageMimeType, data: Buffer): boolean {
+  switch (mimeType) {
+    case "image/png":
+      return hasPrefix(data, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    case "image/jpeg":
+      return hasPrefix(data, [0xff, 0xd8, 0xff]);
+    case "image/gif":
+      return data.length >= 6 && (data.subarray(0, 6).toString("ascii") === "GIF87a" || data.subarray(0, 6).toString("ascii") === "GIF89a");
+    case "image/webp":
+      return data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
+  }
+}
 
 export class Workspace {
   readonly root: string;
@@ -242,6 +280,59 @@ export class Workspace {
       remainingLines: remaining,
       nextStartLine: remaining > 0 ? actualEnd + 1 : null,
       content: lines.join("\n"),
+    };
+  }
+
+  async readImage(requested: string): Promise<ReadImageResult> {
+    const { abs, rel } = this.resolve(requested);
+    const expectedMime = IMAGE_MIME_BY_EXTENSION[path.extname(rel).toLowerCase()];
+    if (!expectedMime) {
+      throw new WorkspaceError(
+        "UNSUPPORTED_IMAGE_FORMAT",
+        `Unsupported image format: ${rel}. Supported formats: PNG, JPG/JPEG, WEBP and GIF.`
+      );
+    }
+
+    let stat: fs.Stats;
+    try {
+      stat = await fs.promises.stat(abs);
+    } catch {
+      throw new WorkspaceError("FILE_NOT_FOUND", `File not found: ${rel}`);
+    }
+    if (!stat.isFile()) {
+      throw new WorkspaceError("NOT_A_FILE", `Not a regular file: ${rel}`);
+    }
+    if (stat.size > MAX_IMAGE_BYTES) {
+      throw new WorkspaceError(
+        "IMAGE_TOO_LARGE",
+        `Image is too large (${stat.size} bytes): ${rel}. Maximum allowed size is ${MAX_IMAGE_BYTES} bytes.`
+      );
+    }
+
+    let data: Buffer;
+    try {
+      data = await fs.promises.readFile(abs);
+    } catch {
+      throw new WorkspaceError("FILE_NOT_FOUND", `File not found: ${rel}`);
+    }
+    if (data.length > MAX_IMAGE_BYTES) {
+      throw new WorkspaceError(
+        "IMAGE_TOO_LARGE",
+        `Image is too large (${data.length} bytes): ${rel}. Maximum allowed size is ${MAX_IMAGE_BYTES} bytes.`
+      );
+    }
+    if (!imageSignatureMatches(expectedMime, data)) {
+      throw new WorkspaceError(
+        "INVALID_IMAGE",
+        `The file header does not match its image extension: ${rel}.`
+      );
+    }
+
+    return {
+      path: rel,
+      sizeBytes: data.length,
+      mimeType: expectedMime,
+      dataBase64: data.toString("base64"),
     };
   }
 

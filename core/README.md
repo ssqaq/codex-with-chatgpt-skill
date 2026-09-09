@@ -170,8 +170,8 @@ Credentials stay in the OS app state directory, not in the project.
 - **Control plane (Computer Use)**: Codex and ChatGPT exchange tiny structured
   `[C2C]` state messages — `INIT → PLAN → EXECUTED → REVIEW → DONE`. No diffs,
   no logs, no file bodies are ever pasted.
-- **Data plane (MCP)**: ChatGPT pulls what it needs itself through 9 read-only
-  tools: `workspace_info`, `list_directory`, `read_file`, `search_workspace`,
+- **Data plane (MCP)**: ChatGPT pulls what it needs itself through 10 read-only
+  tools: `workspace_info`, `list_directory`, `read_file`, `read_image`, `search_workspace`,
   `git_status`, `git_diff`, `test_status`, `execution_summary`,
   `execution_output`.
 - **Independent review**: after Codex executes, ChatGPT inspects the actual
@@ -201,7 +201,7 @@ Full threat model: [docs/security.md](docs/security.md)
 ```bash
 pnpm install
 pnpm build          # -> dist/, exposes the `c2c` bin
-pnpm test           # vitest: 146 tests (path security, OAuth, pairing, MCP e2e)
+pnpm test           # vitest: 174 tests (path security, OAuth, pairing, MCP e2e)
 
 c2c setup           # bridge + tunnel + pairing code, all in one
 c2c sandbox-allow   # whitelist the settings dir in Codex (macOS + Windows)
@@ -219,7 +219,7 @@ Docs: [architecture](docs/architecture.md) · [protocol](docs/protocol.md) ·
 ```
 src/
   bridge/     loopback HTTP server, port recovery, admin API
-  mcp/        9 read-only tools, stateless Streamable HTTP
+  mcp/        10 read-only tools, stateless Streamable HTTP
   auth/       OAuth 2.1 (PKCE, DCR, refresh rotation, revocation)
   pairing/    one-time pairing codes (CSPRNG, TTL, rate limits)
   workspace/  path containment, sensitive-file policy, search, git

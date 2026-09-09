@@ -19,6 +19,13 @@ function textOf(result: { content?: unknown }): string {
   return content?.[0]?.text ?? "";
 }
 
+function imageOf(result: { content?: unknown }): { type: string; data: string; mimeType: string } | undefined {
+  const content = result.content as { type: string; data?: string; mimeType?: string }[];
+  return content?.find((item) => item.type === "image") as
+    | { type: string; data: string; mimeType: string }
+    | undefined;
+}
+
 function jsonOf<T = Record<string, unknown>>(result: { content?: unknown }): T {
   return JSON.parse(textOf(result)) as T;
 }
@@ -47,6 +54,7 @@ beforeAll(async () => {
   makeGitRepo(root);
   write(root, "package.json", JSON.stringify({ name: "demo", scripts: { test: "vitest run" }, dependencies: { react: "^19.0.0" } }));
   write(root, ".env", "API_KEY=supersecret\n");
+  fs.writeFileSync(path.join(root, "screen.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   // an uncommitted change so git_diff has content
   write(root, "src/index.ts", "export const answer = 43; // changed\n");
 
@@ -76,7 +84,7 @@ afterAll(async () => {
 });
 
 describe("MCP tools over Streamable HTTP", () => {
-  it("lists all nine read-only tools", async () => {
+  it("lists all ten read-only tools", async () => {
     const { tools } = await client.listTools();
     const names = tools.map((tool) => tool.name).sort();
     expect(names).toEqual([
@@ -86,6 +94,7 @@ describe("MCP tools over Streamable HTTP", () => {
       "git_status",
       "list_directory",
       "read_file",
+      "read_image",
       "search_workspace",
       "test_status",
       "workspace_info",
@@ -98,6 +107,7 @@ describe("MCP tools over Streamable HTTP", () => {
     expectToolOutputSchema(tools, "workspace_info", ["workspaceId", "workspaceName", "projectType", "git"]);
     expectToolOutputSchema(tools, "list_directory", ["path", "entries", "total", "hasMore"]);
     expectToolOutputSchema(tools, "read_file", ["path", "content", "startLine", "endLine", "nextStartLine"]);
+    expectToolOutputSchema(tools, "read_image", ["path", "sizeBytes", "mimeType"]);
     expectToolOutputSchema(tools, "search_workspace", ["matches", "matchCount", "truncated", "engine"]);
     expectToolOutputSchema(tools, "git_status", ["isRepo", "branch", "staged", "unstaged", "untracked"]);
     expectToolOutputSchema(tools, "git_diff", ["isRepo", "mode", "diff", "hasMore", "nextOffset"]);
@@ -136,6 +146,30 @@ describe("MCP tools over Streamable HTTP", () => {
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain("ACCESS_DENIED_SENSITIVE_FILE");
     expect(textOf(result)).not.toContain("supersecret");
+  });
+
+  it("read_image returns an image content block and metadata without duplicating base64 in structured content", async () => {
+    const result = await client.callTool({ name: "read_image", arguments: { path: "screen.png" } });
+    const image = imageOf(result);
+    expect(result.isError ?? false).toBe(false);
+    expect(image?.type).toBe("image");
+    expect(image?.mimeType).toBe("image/png");
+    expect(Buffer.from(image?.data ?? "", "base64")).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    const metadata = structuredJsonOf<{ path: string; sizeBytes: number; mimeType: string }>(result);
+    expect(metadata).toEqual({ path: "screen.png", sizeBytes: 8, mimeType: "image/png" });
+    expect(JSON.stringify(result.structuredContent)).not.toContain(image?.data ?? "not-base64");
+  });
+
+  it("read_image denies sensitive and unsupported files without returning image content", async () => {
+    const sensitive = await client.callTool({ name: "read_image", arguments: { path: ".env" } });
+    expect(sensitive.isError).toBe(true);
+    expect(textOf(sensitive)).toContain("ACCESS_DENIED_SENSITIVE_FILE");
+    expect(imageOf(sensitive)).toBeUndefined();
+
+    const unsupported = await client.callTool({ name: "read_image", arguments: { path: "hello.txt" } });
+    expect(unsupported.isError).toBe(true);
+    expect(textOf(unsupported)).toContain("UNSUPPORTED_IMAGE_FORMAT");
+    expect(imageOf(unsupported)).toBeUndefined();
   });
 
   it("read_file denies paths outside the workspace", async () => {
@@ -315,6 +349,16 @@ describe("MCP tools over Streamable HTTP", () => {
     expect(textOf(outputDenied)).toContain("INSUFFICIENT_SCOPE");
     const allowed = await limitedClient.callTool({ name: "read_file", arguments: { path: "hello.txt" } });
     expect(allowed.isError ?? false).toBe(false);
+    const noWorkspaceRead = bridge.authStore.issueTokens({ clientId: "no-workspace-read", scopes: ["git.read"] });
+    const noWorkspaceReadClient = new Client({ name: "no-workspace-read", version: "1.0.0" });
+    const noWorkspaceReadTransport = new StreamableHTTPClientTransport(new URL(`${bridge.localBaseUrl()}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${noWorkspaceRead.accessToken}` } },
+    });
+    await noWorkspaceReadClient.connect(noWorkspaceReadTransport);
+    const imageDenied = await noWorkspaceReadClient.callTool({ name: "read_image", arguments: { path: "screen.png" } });
+    expect(imageDenied.isError).toBe(true);
+    expect(textOf(imageDenied)).toContain("INSUFFICIENT_SCOPE");
+    await noWorkspaceReadClient.close();
     await limitedClient.close();
   });
 

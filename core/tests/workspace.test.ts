@@ -165,6 +165,49 @@ describe("read_file pagination", () => {
   });
 });
 
+describe("read_image", () => {
+  it("reads PNG, JPEG, WEBP and GIF files with MIME metadata", async () => {
+    const fixtures: Array<{ name: string; bytes: Buffer; mimeType: string }> = [
+      { name: "screen.png", bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), mimeType: "image/png" },
+      { name: "photo.jpg", bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: "image/jpeg" },
+      { name: "preview.webp", bytes: Buffer.from("RIFF0000WEBP", "ascii"), mimeType: "image/webp" },
+      { name: "animation.gif", bytes: Buffer.from("GIF89a", "ascii"), mimeType: "image/gif" },
+    ];
+
+    for (const fixture of fixtures) {
+      fs.writeFileSync(path.join(root, fixture.name), fixture.bytes);
+      const result = await ws.readImage(fixture.name);
+      expect(result.mimeType).toBe(fixture.mimeType);
+      expect(result.sizeBytes).toBe(fixture.bytes.length);
+      expect(Buffer.from(result.dataBase64, "base64")).toEqual(fixture.bytes);
+    }
+  });
+
+  it("rejects unsupported extensions and mismatched file headers", async () => {
+    fs.writeFileSync(path.join(root, "notes.txt"), Buffer.from("not an image"));
+    await expect(ws.readImage("notes.txt")).rejects.toMatchObject({ code: "UNSUPPORTED_IMAGE_FORMAT" });
+
+    fs.writeFileSync(path.join(root, "wrong.png"), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+    await expect(ws.readImage("wrong.png")).rejects.toMatchObject({ code: "INVALID_IMAGE" });
+  });
+
+  it("enforces workspace and sensitive-file boundaries", async () => {
+    fs.writeFileSync(path.join(outside, "outside.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    await expect(ws.readImage(path.join(outside, "outside.png"))).rejects.toMatchObject({ code: "PATH_OUTSIDE_WORKSPACE" });
+
+    fs.writeFileSync(path.join(root, ".env.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    await expect(ws.readImage(".env.png")).rejects.toMatchObject({ code: "ACCESS_DENIED_SENSITIVE_FILE" });
+  });
+
+  it("rejects images larger than 10 MB", async () => {
+    fs.writeFileSync(path.join(root, "large.png"), Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.alloc(10 * 1024 * 1024),
+    ]));
+    await expect(ws.readImage("large.png")).rejects.toMatchObject({ code: "IMAGE_TOO_LARGE" });
+  });
+});
+
 describe("workspace identity", () => {
   it("has a stable id and name", () => {
     const again = new Workspace(root);

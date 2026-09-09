@@ -160,6 +160,28 @@ disagreement fingerprint is unchanged for two consecutive rounds, Codex sends
 `STATE: BLOCKED` locally, displays the repeated disagreement, and waits for
 the user. `STOP` from the user cancels the loop without execution.
 
+### Direct image reading
+
+When a task includes a workspace image, ChatGPT reads it through the read-only
+MCP tool `read_image`:
+
+```
+TOOL: read_image
+PATH: screenshots/error.png
+```
+
+The tool accepts only workspace-contained PNG, JPG/JPEG, WEBP and GIF files up
+to 10 MB. It returns a standard MCP image content block plus path, size and
+MIME metadata. It never writes a copy, creates a ChatGPT file upload, pushes
+the image to GitHub, or calls an external vision service. The image bytes are
+transient data in the current connector response only.
+
+If reading fails, Codex reports the structured error and continues with the
+text-only flow. It must not fall back to an upload or another vision model.
+Image analysis summaries may be included in `CONSENSUS_PLAN` and
+`CONSENSUS_REVIEW`; binary data and base64 must never be placed in control
+messages.
+
 ### EXECUTED (Codex → ChatGPT)
 
 ```

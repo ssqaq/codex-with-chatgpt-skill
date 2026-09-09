@@ -107,8 +107,8 @@ Ready.
 - **控制面（Computer Use）**：Codex 与 ChatGPT 之间只交换极小的结构化 `[C2C]`
   状态消息——`INIT → PLAN → EXECUTED → REVIEW → DONE`。绝不粘贴 diff、日志
   或文件内容。
-- **数据面（MCP）**：ChatGPT 缺什么自己拉什么，共 9 个只读工具：
-  `workspace_info`、`list_directory`、`read_file`、`search_workspace`、
+- **数据面（MCP）**：ChatGPT 缺什么自己拉什么，共 10 个只读工具：
+  `workspace_info`、`list_directory`、`read_file`、`read_image`、`search_workspace`、
   `git_status`、`git_diff`、`test_status`、`execution_summary`、
   `execution_output`。
 - **独立审查**：Codex 执行完毕后，ChatGPT 通过 MCP 亲自检查真实的 git diff
@@ -134,7 +134,7 @@ Ready.
 ```bash
 pnpm install
 pnpm build          # 产出 dist/，暴露 c2c 命令
-pnpm test           # vitest：146 个测试（路径安全、OAuth、配对、MCP 端到端）
+pnpm test           # vitest：174 个测试（路径安全、OAuth、配对、MCP 端到端）
 
 c2c setup           # 一条命令：Bridge + 隧道 + 配对码
 c2c sandbox-allow   # 把本地设置目录加入 Codex 沙箱白名单（macOS / Windows）

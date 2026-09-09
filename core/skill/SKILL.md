@@ -57,8 +57,17 @@ description: >
 等待用户；用户说“停止”时立即取消，不执行修改。重启或旧会话恢复时，先显示
 `多轮评审：恢复第 N 轮`，继续原会话、原连接器，不新建或重复配对。
 
-本阶段只处理纯文字方案。图片读取、截图直接分析和图片布局复核暂不启用，
-必须等纯文字多轮评审测试通过后另行评估。
+## 图片直接读取
+
+当用户提供工作区内的 PNG、JPG/JPEG、WEBP 或 GIF 路径，或明确要求分析
+截图时，先通过当前连接的 `read_image` 只读工具读取图片，再把图片分析接入
+快速流程或纯文字多轮评审。图片只作为当前连接的临时内容返回，不复制到
+ChatGPT 文件区、不上传 GitHub，也不调用任何外部视觉服务或其他视觉模型。
+
+读取限制：路径必须在当前工作区内，敏感文件和越界路径拒绝，单张图片最大
+10 MB。图片无法读取时，明确显示失败原因并继续纯文字流程，不自动上传或
+切换其他视觉服务。多轮评审中每一轮仍显示 `多轮评审：第 N 轮`，只发送
+图片分析摘要和评审结论，不粘贴二进制内容。
 
 ## 推荐模型
 
@@ -231,9 +240,13 @@ that close the tab, hide the window, or stall on the settings page.
   (installer/update MUST replace this line in the installed Skill with the user's actual checkout path.)
 - CLI: let `<checkout>` mean the path on the previous line; run
   `node "<checkout>/bin/c2c.js" <command>` (or `c2c <command>` if globally linked).
-  All commands support `--json` for parsing.
+  In the canonical public repository layout, use
+  `node "<checkout>/core/bin/c2c.js" <command>` and run build commands inside
+  `<checkout>/core`. All commands support `--json` for parsing.
 - If the checkout has no `node_modules` or no `dist/`, first run
-  `corepack pnpm install && corepack pnpm build` inside it.
+  `corepack pnpm install && corepack pnpm build` inside the checkout's `core/`
+  directory when that directory contains `package.json`; otherwise run it in
+  the checkout itself.
 - Always pass `-w <workspace root>` (the project the user is working on, NOT the c2c repo).
 
 ## Daily update check
@@ -266,7 +279,9 @@ Inside the checkout directory (see Locations):
    installed Skill. If any later step fails, it automatically restores that
    backup. Manual commands are `scripts/backup.ps1` / `scripts/backup.sh` and
    `scripts/rollback.ps1` / `scripts/rollback.sh`.
-2. `corepack pnpm install && corepack pnpm build`.
+2. If `<checkout>/core/package.json` exists, run `corepack pnpm install &&
+   corepack pnpm build` inside `<checkout>/core`; otherwise run those commands
+   inside `<checkout>`.
 3. Re-install the Skill: copy the repository's canonical Skill file to
    `~/.codex/skills/codex-with-chatgpt/SKILL.md`, then fix the "checkout lives at:"
    line in the copy to the actual checkout path. In this public repository the
@@ -712,7 +727,7 @@ If status is restricted, ignore it and review from git_diff.
 
    Then:
    `c2c session set -w <ws> --protocol-state EXECUTED_SENT --waiting-for GPT_REVIEW --next-step "wait for PLAN or DONE"`
-7. ChatGPT reviews via MCP (`git_diff`, `read_file`, `test_status`,
+7. ChatGPT reviews via MCP (`git_diff`, `read_file`, `read_image`, `test_status`,
    `execution_output`) and replies DONE / PLAN (next iteration) / BLOCKED.
 8. Loop. Respect maxIterations (`.c2c.json`, default 12). At the limit, pause and ask
    the user: "已完成 12 轮协作，仍有未解决问题，是否继续？"

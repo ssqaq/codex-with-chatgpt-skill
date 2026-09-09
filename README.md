@@ -71,9 +71,10 @@ Windows 在 PowerShell 运行 `scripts/install.ps1`；macOS/Linux 在终端运�
 
 > 先做方案，多轮评审后再修改这个功能。
 
-Codex 会显示“多轮评审：第 N 轮”，把纯文字方案发给当前网页版 GPT-5.6
+Codex 会显示“多轮评审：第 N 轮”，把方案发给当前网页版 GPT-5.6
 Sol + Pro 最高强度评审，双方确认 `CONSENSUS` 后才修改文件。普通请求仍然
-走快速流程；当前版本暂不包含图片直接读取。
+走快速流程；需要看工作区截图时，ChatGPT 会通过只读 `read_image` 工具直接读取，
+不自动上传图片或调用外部视觉服务。
 
 ## 安装
 
