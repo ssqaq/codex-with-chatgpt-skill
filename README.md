@@ -30,6 +30,16 @@ Windows 在 PowerShell 运行 `scripts/install.ps1`；macOS/Linux 在终端运�
 
 ![配对流程示意图](docs/images/pairing-flow.svg)
 
+## 更新、检查和卸载
+
+- 更新：Windows 运行 `scripts/update.ps1`；macOS/Linux 运行 `bash scripts/update.sh`。
+- 检查版本：Windows 运行 `scripts/check-version.ps1`；macOS/Linux 运行 `bash scripts/check-version.sh`。
+- 卸载 Skill：Windows 运行 `scripts/uninstall.ps1`；macOS/Linux 运行 `bash scripts/uninstall.sh`。默认只移除 Skill，项目目录会保留。
+
+连接方式已经选择过后，后面换项目会自动沿用最近一次选择，一般不会再重复询问临时地址或固定域名。
+
+核心程序仓库：[ssqaq/codex-with-chatgpt](https://github.com/ssqaq/codex-with-chatgpt)
+
 ## 适合做什么
 
 - 开发新功能
