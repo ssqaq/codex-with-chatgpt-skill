@@ -6,5 +6,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 $installer = Join-Path $PSScriptRoot "install.ps1"
-& $installer -Checkout $Checkout -SkillDirectory $SkillDirectory
+$backup = Join-Path $PSScriptRoot "backup.ps1"
+$rollback = Join-Path $PSScriptRoot "rollback.ps1"
+& $backup -Checkout $Checkout -SkillDirectory $SkillDirectory
+try {
+  & $installer -Checkout $Checkout -SkillDirectory $SkillDirectory
+} catch {
+  Write-Warning "更新失败，正在恢复上一版..."
+  & $rollback
+  throw
+}
 Write-Host "更新完成。"

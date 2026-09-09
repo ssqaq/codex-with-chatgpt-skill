@@ -39,5 +39,5 @@ jobs:
       - name: 检查安装脚本
         working-directory: .
         run: |
-          bash -n scripts/install.sh scripts/update.sh scripts/uninstall.sh scripts/check-version.sh
+          bash -n scripts/install.sh scripts/update.sh scripts/uninstall.sh scripts/check-version.sh scripts/backup.sh scripts/rollback.sh
           pwsh -NoProfile -Command '$errors=@(); foreach ($p in Get-ChildItem scripts -Filter "*.ps1") { $t=$null; $e=$null; [System.Management.Automation.Language.Parser]::ParseFile($p.FullName,[ref]$t,[ref]$e) | Out-Null; if ($e.Count) { $errors += $p.Name } }; if ($errors.Count) { throw ($errors -join ", ") }'

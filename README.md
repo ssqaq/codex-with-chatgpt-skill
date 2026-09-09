@@ -38,6 +38,8 @@ Windows 在 PowerShell 运行 `scripts/install.ps1`；macOS/Linux 在终端运�
 
 - 更新：Windows 运行 `scripts/update.ps1`；macOS/Linux 运行 `bash scripts/update.sh`。
 - 检查版本：Windows 运行 `scripts/check-version.ps1`；macOS/Linux 运行 `bash scripts/check-version.sh`。
+- 版本检查会直接显示：本机版本、GitHub 最新版本、是否需要更新。
+- 更新前会自动备份；更新失败会自动恢复。需要手动操作时，运行 `scripts/backup.ps1` / `scripts/backup.sh` 备份，运行 `scripts/rollback.ps1` / `scripts/rollback.sh` 回滚。
 - 卸载 Skill：Windows 运行 `scripts/uninstall.ps1`；macOS/Linux 运行 `bash scripts/uninstall.sh`。默认只移除 Skill，项目目录会保留。
 
 连接方式已经选择过后，后面换项目会自动沿用最近一次选择，一般不会再重复询问临时地址或固定域名。
@@ -48,7 +50,7 @@ Windows 在 PowerShell 运行 `scripts/install.ps1`；macOS/Linux 在终端运�
 
 更新 Skill 后，新会话会自动使用新规则。已经打开的旧会话不会自动改写
 历史消息，但也不用重新开会话：更新完成后让 Codex 给原会话发一次同步，
-它会在原来的工作区、原来的连接上继续，不会重复配对。
+发送前会先显示“会话名称 + 工作区”供核对；确认后它会在原来的工作区、原来的连接上继续，不会重复配对。
 
 旧会话同步只影响下一步怎么做，之前已经显示的回复不会被改写，这是正常的。
 

@@ -72,7 +72,7 @@ I am a non-technical user — do everything yourself:
 2. Download: clone https://github.com/XiaoDuoYa/codex-with-chatgpt into
    ~/codex-with-chatgpt (if it already exists, git pull to update).
 3. Build: inside that folder run `corepack pnpm install` then `corepack pnpm build`.
-4. Install the Skill: copy skill/SKILL.md to
+4. Install the Skill: copy the repository root SKILL.md to
    ~/.codex/skills/codex-with-chatgpt/SKILL.md, and update the line
    "The codex-with-chatgpt checkout lives at:" to the actual clone path.
 5. First-time setup: follow the SKILL.md "first-time setup" workflow

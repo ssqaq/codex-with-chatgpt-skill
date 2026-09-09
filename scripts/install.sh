@@ -51,7 +51,10 @@ corepack pnpm install
 corepack pnpm build
 
 mkdir -p "$SKILL_DIRECTORY"
-source_skill="$PROJECT_ROOT/skill/SKILL.md"
+source_skill="$CHECKOUT/SKILL.md"
+if [[ ! -f "$source_skill" ]]; then
+  source_skill="$PROJECT_ROOT/skill/SKILL.md"
+fi
 target_skill="$SKILL_DIRECTORY/SKILL.md"
 [[ -f "$source_skill" ]] || { echo "找不到 Skill 文件：$source_skill" >&2; exit 1; }
 cp "$source_skill" "$target_skill"

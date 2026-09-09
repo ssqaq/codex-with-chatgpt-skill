@@ -217,11 +217,19 @@ commands (both are cheap / cached; never mention them unless an update exists):
   "检测到 Codex with ChatGPT 有新版本，我先更新一下（约 1 分钟），随后继续你的任务。"
   Then run the update workflow below, and CONTINUE the original task afterwards.
 
+The version result must be shown as three plain-language fields: 本机版本、
+GitHub 最新版本、是否需要更新。 Exit code 10 means an update is available;
+it is a status result, not a crash.
+
 ## Workflow: update（"更新 Codex with ChatGPT"，or triggered by the daily check）
 
 Inside the checkout directory (see Locations):
 
 1. `git pull --ff-only` (if it fails due to local edits: `git stash && git pull --ff-only`).
+   The update wrapper first creates a local backup of the current commit and
+   installed Skill. If any later step fails, it automatically restores that
+   backup. Manual commands are `scripts/backup.ps1` / `scripts/backup.sh` and
+   `scripts/rollback.ps1` / `scripts/rollback.sh`.
 2. `corepack pnpm install && corepack pnpm build`.
 3. Re-install the Skill: copy the repository's canonical Skill file to
    `~/.codex/skills/codex-with-chatgpt/SKILL.md`, then fix the "checkout lives at:"
@@ -244,8 +252,10 @@ new chat, connector, or pairing.
 
 1. Copy the freshly installed Skill version into the task's local Skill path
    (the update workflow above already does this).
-2. Use the Codex app's `send_message_to_thread` for the existing task and send
-   this short message, filling in the real version and task id:
+2. Before sending anything, display the existing task's exact **title** and
+   **workspace path** and verify both match the user's request. Use the Codex
+   app's `send_message_to_thread` for that same task and send this short
+   message, filling in the real version and task id:
 
 ```
 Skill 已更新到 <version>。请在当前旧会话中重新读取本机

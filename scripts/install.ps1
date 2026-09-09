@@ -56,7 +56,10 @@ if (-not $SkipBuild) {
 }
 
 New-Item -ItemType Directory -Force -Path $SkillDirectory | Out-Null
-$sourceSkill = Join-Path $projectRoot "skill\SKILL.md"
+$sourceSkill = Join-Path $Checkout "SKILL.md"
+if (-not (Test-Path $sourceSkill)) {
+  $sourceSkill = Join-Path $projectRoot "skill\SKILL.md"
+}
 $targetSkill = Join-Path $SkillDirectory "SKILL.md"
 if (-not (Test-Path $sourceSkill)) { throw "找不到 Skill 文件：$sourceSkill" }
 Copy-Item -LiteralPath $sourceSkill -Destination $targetSkill -Force

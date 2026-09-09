@@ -11,8 +11,10 @@ if (-not $CurrentVersion) {
 }
 $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repository/releases/latest" -Headers @{ "User-Agent" = "codex-with-chatgpt-skill" }
 $latest = ($release.tag_name -replace '^v', '').Trim()
-if ([version]$CurrentVersion -lt [version]$latest) {
-  Write-Host "有新版本：$CurrentVersion -> $latest"
+$needsUpdate = [version]$CurrentVersion -lt [version]$latest
+Write-Host "本机版本：$CurrentVersion"
+Write-Host "GitHub 最新版本：$latest"
+Write-Host ("是否需要更新：" + $(if ($needsUpdate) { "是" } else { "否" }))
+if ($needsUpdate) {
   exit 10
 }
-Write-Host "已是最新版本：$CurrentVersion"
