@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [string]$SkillDirectory = (Join-Path $HOME ".codex\skills\codex-with-chatgpt"),
   [switch]$RemoveCheckout,
@@ -17,3 +17,4 @@ if ($RemoveCheckout -and (Test-Path $Checkout)) {
   Write-Host "已移除项目目录：$Checkout"
 }
 Write-Host "卸载完成。默认保留项目目录；如需一起移除，请加 -RemoveCheckout。"
+

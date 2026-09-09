@@ -842,6 +842,7 @@ program
 // ---------------------------------------------------------------- update-check (once per local day)
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const GITHUB_REPOSITORY = "ssqaq/codex-with-chatgpt-skill";
 
 function runGit(args: string[]): { ok: boolean; stdout: string } {
   const result = spawnSync("git", args, {
@@ -853,15 +854,43 @@ function runGit(args: string[]): { ok: boolean; stdout: string } {
   return { ok: result.status === 0, stdout: (result.stdout ?? "").trim() };
 }
 
+function versionTuple(value: string): [number, number, number] {
+  const parts = value.match(/\d+/g)?.slice(0, 3).map(Number) ?? [];
+  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
+}
+
+function compareVersions(left: string, right: string): number {
+  const a = versionTuple(left);
+  const b = versionTuple(right);
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+  }
+  return 0;
+}
+
+async function latestGithubRelease(): Promise<string | null> {
+  try {
+    const response = await fetch(`https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/latest`, {
+      headers: { accept: "application/vnd.github+json", "user-agent": "codex-with-chatgpt" },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { tag_name?: unknown };
+    return typeof body.tag_name === "string" ? body.tag_name.replace(/^v/i, "").trim() || null : null;
+  } catch {
+    return null;
+  }
+}
+
 program
   .command("update-check")
   .description("Check GitHub for a newer version (real check at most once per local day)")
   .option("--force", "check even if already checked today", false)
   .option("--json", "machine-readable output", false)
-  .action((opts: { force: boolean; json: boolean }) => {
+  .action(async (opts: { force: boolean; json: boolean }) => {
     const file = path.join(getStateDir(), "update-check.json");
     const today = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD in local tz
-    let last: { date?: string; updateAvailable?: boolean } = {};
+    let last: { date?: string; updateAvailable?: boolean; latestVersion?: string | null; remoteCommit?: string } = {};
     try {
       last = JSON.parse(fs.readFileSync(file, "utf8")) as typeof last;
     } catch {
@@ -873,15 +902,36 @@ program
       updateAvailable: boolean;
       localCommit?: string;
       remoteCommit?: string;
+      latestVersion?: string | null;
       note?: string;
     }): void => {
-      if (opts.json) say(JSON.stringify({ ok: true, version: VERSION, ...data }));
-      else if (data.updateAvailable) say(`发现新版本（本地 ${data.localCommit?.slice(0, 7)} → 远端 ${data.remoteCommit?.slice(0, 7)}）。`);
-      else say(data.note ?? "已是最新版本。");
+      if (opts.json) {
+        say(
+          JSON.stringify({
+            ok: true,
+            version: VERSION,
+            localVersion: VERSION,
+            githubLatestVersion: data.latestVersion ?? null,
+            needsUpdate: data.updateAvailable,
+            ...data,
+          })
+        );
+      } else {
+        say(`本机版本：${VERSION}`);
+        say(`GitHub 最新版本：${data.latestVersion ?? "无法获取（请稍后重试）"}`);
+        say(`是否需要更新：${data.updateAvailable ? "是" : "否"}`);
+        if (data.note) say(data.note);
+      }
     };
 
     if (!opts.force && last.date === today) {
-      emit({ checked: false, updateAvailable: last.updateAvailable ?? false, note: "今天已检查过更新。" });
+      emit({
+        checked: false,
+        updateAvailable: last.updateAvailable ?? false,
+        latestVersion: last.latestVersion ?? null,
+        remoteCommit: last.remoteCommit,
+        note: "今天已检查过更新。",
+      });
       return;
     }
 
@@ -890,14 +940,15 @@ program
     if (!local.ok || !remote.ok || !remote.stdout) {
       // Offline or not a git checkout: skip quietly and retry tomorrow-ish (do not
       // record the date so a transient failure does not suppress the daily check).
-      emit({ checked: false, updateAvailable: false, note: "无法检查更新（离线或非 git 安装），已跳过。" });
+      emit({ checked: false, updateAvailable: false, latestVersion: null, note: "无法检查更新（离线或非 git 安装），已跳过。" });
       return;
     }
     const remoteCommit = remote.stdout.split(/\s/)[0];
-    const updateAvailable = remoteCommit !== local.stdout;
+    const latestVersion = await latestGithubRelease();
+    const updateAvailable = remoteCommit !== local.stdout || (latestVersion !== null && compareVersions(VERSION, latestVersion) < 0);
     fs.mkdirSync(getStateDir(), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ date: today, updateAvailable, remoteCommit }), { mode: 0o600 });
-    emit({ checked: true, updateAvailable, localCommit: local.stdout, remoteCommit });
+    fs.writeFileSync(file, JSON.stringify({ date: today, updateAvailable, remoteCommit, latestVersion }), { mode: 0o600 });
+    emit({ checked: true, updateAvailable, localCommit: local.stdout, remoteCommit, latestVersion });
   });
 
 // ---------------------------------------------------------------- session (ChatGPT conversation / Project memory)

@@ -110,8 +110,11 @@ const readFileOutputSchema = {
 
 const readImageOutputSchema = {
   path: z.string(),
+  source: z.enum(["workspace", "attachment"]),
   sizeBytes: z.number().int().nonnegative(),
   mimeType: z.enum(["image/png", "image/jpeg", "image/webp", "image/gif"]),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
 };
 
 const searchMatchOutputSchema = z.object({
@@ -303,9 +306,12 @@ export function createMcpServer(ctx: McpContext): McpServer {
       description:
         `Read one PNG, JPG/JPEG, WEBP or GIF image from the connected workspace and return it as ` +
         `a read-only image content block for visual inspection. The image is not copied to a ` +
-        `ChatGPT file area and no external vision service is used. Maximum size is 10 MB. ${UNTRUSTED_NOTE}`,
+        `ChatGPT file area and no external vision service is used. Maximum size is 10 MB. ` +
+        `For a Codex clipboard screenshot in the system temporary directory, pass ` +
+        `attachment=true and the exact codex-clipboard-* image path. ${UNTRUSTED_NOTE}`,
       inputSchema: {
         path: z.string().describe("Workspace-relative image path"),
+        attachment: z.boolean().default(false).describe("Explicitly allow a Codex clipboard image in the temporary directory"),
       },
       outputSchema: readImageOutputSchema,
       annotations: { readOnlyHint: true },
@@ -314,9 +320,16 @@ export function createMcpServer(ctx: McpContext): McpServer {
       const denied = requireScope(extra.authInfo, "workspace.read");
       if (denied) return denied;
       try {
-        const image = await workspace.readImage(args.path);
+        const image = await workspace.readImage(args.path, { attachment: args.attachment });
         return okStructuredImage(
-          { path: image.path, sizeBytes: image.sizeBytes, mimeType: image.mimeType },
+          {
+            path: image.path,
+            source: image.source,
+            sizeBytes: image.sizeBytes,
+            mimeType: image.mimeType,
+            width: image.width,
+            height: image.height,
+          },
           image
         );
       } catch (error) {

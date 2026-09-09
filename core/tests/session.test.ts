@@ -233,6 +233,24 @@ describe("mergeSession", () => {
     ).toThrow(/consensus-repeats/);
   });
 
+  it("blocks consensus execution until both sides confirm", () => {
+    expect(() =>
+      mergeSession(
+        { url: "https://chatgpt.com/c/consensus", taskId: "c2c_consensus", savedAt: "2026-01-01T00:00:00.000Z" },
+        {
+          checkpoint: {
+            protocolState: "EXECUTING",
+            waitingFor: "none",
+            consensusMode: true,
+            consensusRound: 1,
+            codexConsensus: true,
+            chatgptConsensus: false,
+          },
+        }
+      )
+    ).toThrow(/consensus confirmations/);
+  });
+
   it("leaves legacy sessions without a checkpoint unchanged", () => {
     const next = mergeSession(
       {

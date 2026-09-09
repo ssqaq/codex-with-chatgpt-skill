@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { startBridge, type Bridge } from "../src/bridge/server.js";
@@ -54,7 +55,10 @@ beforeAll(async () => {
   makeGitRepo(root);
   write(root, "package.json", JSON.stringify({ name: "demo", scripts: { test: "vitest run" }, dependencies: { react: "^19.0.0" } }));
   write(root, ".env", "API_KEY=supersecret\n");
-  fs.writeFileSync(path.join(root, "screen.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  fs.writeFileSync(
+    path.join(root, "screen.png"),
+    Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", "base64")
+  );
   // an uncommitted change so git_diff has content
   write(root, "src/index.ts", "export const answer = 43; // changed\n");
 
@@ -107,7 +111,7 @@ describe("MCP tools over Streamable HTTP", () => {
     expectToolOutputSchema(tools, "workspace_info", ["workspaceId", "workspaceName", "projectType", "git"]);
     expectToolOutputSchema(tools, "list_directory", ["path", "entries", "total", "hasMore"]);
     expectToolOutputSchema(tools, "read_file", ["path", "content", "startLine", "endLine", "nextStartLine"]);
-    expectToolOutputSchema(tools, "read_image", ["path", "sizeBytes", "mimeType"]);
+    expectToolOutputSchema(tools, "read_image", ["path", "source", "sizeBytes", "mimeType", "width", "height"]);
     expectToolOutputSchema(tools, "search_workspace", ["matches", "matchCount", "truncated", "engine"]);
     expectToolOutputSchema(tools, "git_status", ["isRepo", "branch", "staged", "unstaged", "untracked"]);
     expectToolOutputSchema(tools, "git_diff", ["isRepo", "mode", "diff", "hasMore", "nextOffset"]);
@@ -154,10 +158,28 @@ describe("MCP tools over Streamable HTTP", () => {
     expect(result.isError ?? false).toBe(false);
     expect(image?.type).toBe("image");
     expect(image?.mimeType).toBe("image/png");
-    expect(Buffer.from(image?.data ?? "", "base64")).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-    const metadata = structuredJsonOf<{ path: string; sizeBytes: number; mimeType: string }>(result);
-    expect(metadata).toEqual({ path: "screen.png", sizeBytes: 8, mimeType: "image/png" });
+    const expected = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", "base64");
+    expect(Buffer.from(image?.data ?? "", "base64")).toEqual(expected);
+    const metadata = structuredJsonOf<{ path: string; source: string; sizeBytes: number; mimeType: string; width: number; height: number }>(result);
+    expect(metadata).toEqual({ path: "screen.png", source: "workspace", sizeBytes: expected.length, mimeType: "image/png", width: 1, height: 1 });
     expect(JSON.stringify(result.structuredContent)).not.toContain(image?.data ?? "not-base64");
+  });
+
+  it("reads an explicitly authorized clipboard attachment without enabling arbitrary temp paths", async () => {
+    const attachment = path.join(os.tmpdir(), "codex-clipboard-mcp-12345678.png");
+    const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", "base64");
+    fs.writeFileSync(attachment, bytes);
+    try {
+      const result = await client.callTool({ name: "read_image", arguments: { path: attachment, attachment: true } });
+      expect(result.isError ?? false).toBe(false);
+      const metadata = structuredJsonOf<{ source: string; width: number; height: number }>(result);
+      expect(metadata).toMatchObject({ source: "attachment", width: 1, height: 1 });
+      const denied = await client.callTool({ name: "read_image", arguments: { path: attachment } });
+      expect(denied.isError).toBe(true);
+      expect(textOf(denied)).toContain("PATH_OUTSIDE_WORKSPACE");
+    } finally {
+      fs.rmSync(attachment, { force: true });
+    }
   });
 
   it("read_image denies sensitive and unsupported files without returning image content", async () => {

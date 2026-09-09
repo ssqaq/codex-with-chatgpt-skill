@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import readline from "node:readline";
+import os from "node:os";
 import { IgnoreRules } from "./ignore.js";
 import { readJsonIfExists } from "../config/paths.js";
 
@@ -16,7 +17,10 @@ export type WorkspaceErrorCode =
   | "FILE_TOO_LARGE"
   | "UNSUPPORTED_IMAGE_FORMAT"
   | "INVALID_IMAGE"
-  | "IMAGE_TOO_LARGE";
+  | "IMAGE_TOO_LARGE"
+  | "IMAGE_DIMENSIONS_TOO_LARGE"
+  | "IMAGE_READ_BUSY"
+  | "ATTACHMENT_NOT_ALLOWED";
 
 export class WorkspaceError extends Error {
   constructor(
@@ -45,8 +49,11 @@ export interface ReadFileResult {
 
 export interface ReadImageResult {
   path: string;
+  source: "workspace" | "attachment";
   sizeBytes: number;
   mimeType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+  width: number;
+  height: number;
   dataBase64: string;
 }
 
@@ -91,6 +98,14 @@ const DEFAULT_MAX_LINES = 400;
 const HARD_MAX_LINES = 2000;
 const DEFAULT_MAX_BYTES = 256 * 1024;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_WIDTH = 8192;
+const MAX_IMAGE_HEIGHT = 8192;
+const MAX_IMAGE_PIXELS = 40_000_000;
+const MAX_CONCURRENT_IMAGE_READS = 2;
+const MAX_QUEUED_IMAGE_READS = 8;
+
+let activeImageReads = 0;
+const imageReadWaiters: Array<() => void> = [];
 
 type ImageMimeType = ReadImageResult["mimeType"];
 
@@ -117,6 +132,178 @@ function imageSignatureMatches(mimeType: ImageMimeType, data: Buffer): boolean {
     case "image/webp":
       return data.length >= 12 && data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
   }
+}
+
+interface ImageInspection {
+  width: number;
+  height: number;
+}
+
+function invalidImage(): never {
+  throw new WorkspaceError("INVALID_IMAGE", "Image data is truncated or structurally invalid.");
+}
+
+function checkDimensions(width: number, height: number): ImageInspection {
+  if (
+    !Number.isInteger(width) ||
+    !Number.isInteger(height) ||
+    width < 1 ||
+    height < 1 ||
+    width > MAX_IMAGE_WIDTH ||
+    height > MAX_IMAGE_HEIGHT ||
+    width * height > MAX_IMAGE_PIXELS
+  ) {
+    throw new WorkspaceError(
+      "IMAGE_DIMENSIONS_TOO_LARGE",
+      `Image dimensions exceed the limit (${MAX_IMAGE_WIDTH}x${MAX_IMAGE_HEIGHT}, ${MAX_IMAGE_PIXELS} pixels).`
+    );
+  }
+  return { width, height };
+}
+
+function inspectPng(data: Buffer): ImageInspection {
+  if (!imageSignatureMatches("image/png", data) || data.length < 33) invalidImage();
+  let offset = 8;
+  let dimensions: ImageInspection | null = null;
+  let hasIdat = false;
+  let hasIend = false;
+  while (offset + 12 <= data.length) {
+    const length = data.readUInt32BE(offset);
+    const end = offset + 12 + length;
+    if (end > data.length) invalidImage();
+    const type = data.subarray(offset + 4, offset + 8).toString("ascii");
+    if (type === "IHDR") {
+      if (length !== 13 || dimensions) invalidImage();
+      dimensions = checkDimensions(data.readUInt32BE(offset + 8), data.readUInt32BE(offset + 12));
+    } else if (type === "IDAT") {
+      hasIdat = true;
+    } else if (type === "IEND") {
+      if (length !== 0) invalidImage();
+      hasIend = true;
+      break;
+    }
+    offset = end;
+  }
+  if (!dimensions || !hasIdat || !hasIend) invalidImage();
+  return dimensions;
+}
+
+function isJpegSof(marker: number): boolean {
+  return (
+    (marker >= 0xc0 && marker <= 0xc3) ||
+    (marker >= 0xc5 && marker <= 0xc7) ||
+    (marker >= 0xc9 && marker <= 0xcb) ||
+    (marker >= 0xcd && marker <= 0xcf)
+  );
+}
+
+function inspectJpeg(data: Buffer): ImageInspection {
+  if (!imageSignatureMatches("image/jpeg", data) || data.length < 4) invalidImage();
+  let offset = 2;
+  let dimensions: ImageInspection | null = null;
+  let hasSos = false;
+  while (offset + 1 < data.length) {
+    if (data[offset] !== 0xff) {
+      // Encoders may leave padding bytes between marker segments. They are
+      // harmless before SOS and compressed bytes are skipped after SOS.
+      offset++;
+      continue;
+    }
+    while (offset < data.length && data[offset] === 0xff) offset++;
+    if (offset >= data.length) invalidImage();
+    const marker = data[offset++];
+    if (hasSos && marker === 0x00) continue; // byte-stuffed 0xFF in compressed data
+    if (marker === 0xd9) break;
+    if (marker === 0xda) {
+      if (offset + 2 > data.length) invalidImage();
+      const length = data.readUInt16BE(offset);
+      if (length < 2 || offset + length > data.length) invalidImage();
+      offset += length;
+      hasSos = true;
+      continue;
+    }
+    if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) continue;
+    if (offset + 2 > data.length) invalidImage();
+    const length = data.readUInt16BE(offset);
+    if (length < 2 || offset + length > data.length) invalidImage();
+    if (isJpegSof(marker)) {
+      if (length < 7 || dimensions) invalidImage();
+      dimensions = checkDimensions(data.readUInt16BE(offset + 3), data.readUInt16BE(offset + 5));
+    }
+    offset += length;
+  }
+  const eoi = data.lastIndexOf(Buffer.from([0xff, 0xd9]));
+  if (!dimensions || !hasSos || eoi < 0) invalidImage();
+  return dimensions;
+}
+
+function inspectGif(data: Buffer): ImageInspection {
+  if (!imageSignatureMatches("image/gif", data) || data.length < 14 || data[data.length - 1] !== 0x3b) invalidImage();
+  return checkDimensions(data.readUInt16LE(6), data.readUInt16LE(8));
+}
+
+function readUInt24LE(data: Buffer, offset: number): number {
+  return data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16);
+}
+
+function inspectWebp(data: Buffer): ImageInspection {
+  if (!imageSignatureMatches("image/webp", data) || data.length < 30) invalidImage();
+  const riffSize = data.readUInt32LE(4);
+  if (riffSize + 8 > data.length) invalidImage();
+  let offset = 12;
+  while (offset + 8 <= data.length) {
+    const type = data.subarray(offset, offset + 4).toString("ascii");
+    const length = data.readUInt32LE(offset + 4);
+    const dataOffset = offset + 8;
+    const end = dataOffset + length;
+    if (end > data.length) invalidImage();
+    if (type === "VP8X" && length >= 10) {
+      return checkDimensions(readUInt24LE(data, dataOffset + 4) + 1, readUInt24LE(data, dataOffset + 7) + 1);
+    }
+    if (type === "VP8L" && length >= 5 && data[dataOffset] === 0x2f) {
+      const b1 = data[dataOffset + 1];
+      const b2 = data[dataOffset + 2];
+      const b3 = data[dataOffset + 3];
+      const b4 = data[dataOffset + 4];
+      return checkDimensions(1 + ((b1 | (b2 << 8)) & 0x3fff), 1 + (((b2 >> 6) | (b3 << 2) | (b4 << 10)) & 0x3fff));
+    }
+    if (type === "VP8 " && length >= 10 && data[dataOffset + 3] === 0x9d && data[dataOffset + 4] === 0x01 && data[dataOffset + 5] === 0x2a) {
+      return checkDimensions(data.readUInt16LE(dataOffset + 6) & 0x3fff, data.readUInt16LE(dataOffset + 8) & 0x3fff);
+    }
+    offset = dataOffset + length + (length & 1);
+  }
+  invalidImage();
+}
+
+function inspectImage(mimeType: ImageMimeType, data: Buffer): ImageInspection {
+  switch (mimeType) {
+    case "image/png":
+      return inspectPng(data);
+    case "image/jpeg":
+      return inspectJpeg(data);
+    case "image/webp":
+      return inspectWebp(data);
+    case "image/gif":
+      return inspectGif(data);
+  }
+}
+
+async function acquireImageRead(): Promise<() => void> {
+  if (activeImageReads < MAX_CONCURRENT_IMAGE_READS) {
+    activeImageReads++;
+    return () => releaseImageRead();
+  }
+  if (imageReadWaiters.length >= MAX_QUEUED_IMAGE_READS) {
+    throw new WorkspaceError("IMAGE_READ_BUSY", "Too many image reads are already in progress. Try again shortly.");
+  }
+  await new Promise<void>((resolve) => imageReadWaiters.push(resolve));
+  return () => releaseImageRead();
+}
+
+function releaseImageRead(): void {
+  const next = imageReadWaiters.shift();
+  if (next) next();
+  else activeImageReads = Math.max(0, activeImageReads - 1);
 }
 
 export class Workspace {
@@ -283,57 +470,88 @@ export class Workspace {
     };
   }
 
-  async readImage(requested: string): Promise<ReadImageResult> {
-    const { abs, rel } = this.resolve(requested);
-    const expectedMime = IMAGE_MIME_BY_EXTENSION[path.extname(rel).toLowerCase()];
-    if (!expectedMime) {
-      throw new WorkspaceError(
-        "UNSUPPORTED_IMAGE_FORMAT",
-        `Unsupported image format: ${rel}. Supported formats: PNG, JPG/JPEG, WEBP and GIF.`
-      );
+  private resolveAttachment(requested: string): { abs: string; rel: string } {
+    if (typeof requested !== "string" || requested.includes("\0")) {
+      throw new WorkspaceError("INVALID_PATH", "Invalid attachment path");
     }
-
-    let stat: fs.Stats;
+    const input = requested.trim();
+    if (!path.isAbsolute(input)) {
+      throw new WorkspaceError("ATTACHMENT_NOT_ALLOWED", "Attachments must use an absolute temporary-file path.");
+    }
+    const abs = this.canonicalize(path.resolve(input));
+    let tempRoot: string;
     try {
-      stat = await fs.promises.stat(abs);
+      tempRoot = fs.realpathSync.native(os.tmpdir());
     } catch {
-      throw new WorkspaceError("FILE_NOT_FOUND", `File not found: ${rel}`);
+      throw new WorkspaceError("ATTACHMENT_NOT_ALLOWED", "The temporary attachment directory is unavailable.");
     }
-    if (!stat.isFile()) {
-      throw new WorkspaceError("NOT_A_FILE", `Not a regular file: ${rel}`);
+    const tempCase = normCase(tempRoot);
+    const absCase = normCase(abs);
+    if (absCase !== tempCase && !absCase.startsWith(tempCase + path.sep)) {
+      throw new WorkspaceError("ATTACHMENT_NOT_ALLOWED", "Attachment is outside the temporary attachment directory.");
     }
-    if (stat.size > MAX_IMAGE_BYTES) {
-      throw new WorkspaceError(
-        "IMAGE_TOO_LARGE",
-        `Image is too large (${stat.size} bytes): ${rel}. Maximum allowed size is ${MAX_IMAGE_BYTES} bytes.`
-      );
+    const base = path.basename(abs);
+    if (!/^codex-clipboard-[a-z0-9-]{8,80}\.(?:png|jpe?g|webp|gif)$/i.test(base)) {
+      throw new WorkspaceError("ATTACHMENT_NOT_ALLOWED", "Only explicitly named Codex clipboard images may be read.");
     }
+    return { abs, rel: `attachment/${base}` };
+  }
 
-    let data: Buffer;
+  async readImage(requested: string, opts: { attachment?: boolean } = {}): Promise<ReadImageResult> {
+    const release = await acquireImageRead();
     try {
-      data = await fs.promises.readFile(abs);
-    } catch {
-      throw new WorkspaceError("FILE_NOT_FOUND", `File not found: ${rel}`);
-    }
-    if (data.length > MAX_IMAGE_BYTES) {
-      throw new WorkspaceError(
-        "IMAGE_TOO_LARGE",
-        `Image is too large (${data.length} bytes): ${rel}. Maximum allowed size is ${MAX_IMAGE_BYTES} bytes.`
-      );
-    }
-    if (!imageSignatureMatches(expectedMime, data)) {
-      throw new WorkspaceError(
-        "INVALID_IMAGE",
-        `The file header does not match its image extension: ${rel}.`
-      );
-    }
+      const resolved = opts.attachment ? this.resolveAttachment(requested) : this.resolve(requested);
+      const { abs, rel } = resolved;
+      const source = opts.attachment ? "attachment" : "workspace";
+      const expectedMime = IMAGE_MIME_BY_EXTENSION[path.extname(rel).toLowerCase()];
+      if (!expectedMime) {
+        throw new WorkspaceError(
+          "UNSUPPORTED_IMAGE_FORMAT",
+          `Unsupported image format: ${rel}. Supported formats: PNG, JPG/JPEG, WEBP and GIF.`
+        );
+      }
 
-    return {
-      path: rel,
-      sizeBytes: data.length,
-      mimeType: expectedMime,
-      dataBase64: data.toString("base64"),
-    };
+      let stat: fs.Stats;
+      try {
+        stat = await fs.promises.stat(abs);
+      } catch {
+        throw new WorkspaceError("FILE_NOT_FOUND", `File not found: ${rel}`);
+      }
+      if (!stat.isFile()) {
+        throw new WorkspaceError("NOT_A_FILE", `Not a regular file: ${rel}`);
+      }
+      if (stat.size > MAX_IMAGE_BYTES) {
+        throw new WorkspaceError(
+          "IMAGE_TOO_LARGE",
+          `Image is too large (${stat.size} bytes): ${rel}. Maximum allowed size is ${MAX_IMAGE_BYTES} bytes.`
+        );
+      }
+
+      let data: Buffer;
+      try {
+        data = await fs.promises.readFile(abs);
+      } catch {
+        throw new WorkspaceError("FILE_NOT_FOUND", `File not found: ${rel}`);
+      }
+      if (data.length > MAX_IMAGE_BYTES) {
+        throw new WorkspaceError(
+          "IMAGE_TOO_LARGE",
+          `Image is too large (${data.length} bytes): ${rel}. Maximum allowed size is ${MAX_IMAGE_BYTES} bytes.`
+        );
+      }
+      const dimensions = inspectImage(expectedMime, data);
+      return {
+        path: rel,
+        source,
+        sizeBytes: data.length,
+        mimeType: expectedMime,
+        width: dimensions.width,
+        height: dimensions.height,
+        dataBase64: data.toString("base64"),
+      };
+    } finally {
+      release();
+    }
   }
 
   async listDirectory(

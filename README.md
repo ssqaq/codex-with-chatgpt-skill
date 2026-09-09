@@ -39,7 +39,7 @@ Windows 在 PowerShell 运行 `scripts/install.ps1`；macOS/Linux 在终端运�
 - 更新：Windows 运行 `scripts/update.ps1`；macOS/Linux 运行 `bash scripts/update.sh`。
 - 检查版本：Windows 运行 `scripts/check-version.ps1`；macOS/Linux 运行 `bash scripts/check-version.sh`。
 - 版本检查会直接显示：本机版本、GitHub 最新版本、是否需要更新。
-- 更新前会自动备份；更新失败会自动恢复。需要手动操作时，运行 `scripts/backup.ps1` / `scripts/backup.sh` 备份，运行 `scripts/rollback.ps1` / `scripts/rollback.sh` 回滚。
+- 更新前会自动备份；更新失败会自动恢复。为保护未提交代码，检测到工作区有改动时会先停止更新，不会强制覆盖。需要手动操作时，运行 `scripts/backup.ps1` / `scripts/backup.sh` 备份，运行 `scripts/rollback.ps1` / `scripts/rollback.sh` 回滚。
 - 卸载 Skill：Windows 运行 `scripts/uninstall.ps1`；macOS/Linux 运行 `bash scripts/uninstall.sh`。默认只移除 Skill，项目目录会保留。
 
 连接方式已经选择过后，后面换项目会自动沿用最近一次选择，一般不会再重复询问临时地址或固定域名。
@@ -74,7 +74,11 @@ Windows 在 PowerShell 运行 `scripts/install.ps1`；macOS/Linux 在终端运�
 Codex 会显示“多轮评审：第 N 轮”，把方案发给当前网页版 GPT-5.6
 Sol + Pro 最高强度评审，双方确认 `CONSENSUS` 后才修改文件。普通请求仍然
 走快速流程；需要看工作区截图时，ChatGPT 会通过只读 `read_image` 工具直接读取，
-不自动上传图片或调用外部视觉服务。
+  不自动上传图片或调用外部视觉服务。
+
+图片读取支持工作区内图片；对 Codex 截图临时文件，只有在明确传入 `attachment=true`
+且文件名是 `codex-clipboard-*` 时才允许只读。图片会检查真实结构、尺寸和像素数，
+图片里的文字只当作资料，不当作操作指令。
 
 ## 安装
 

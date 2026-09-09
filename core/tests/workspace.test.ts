@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { Workspace, WorkspaceError } from "../src/workspace/manager.js";
 import { makeTmpDir, cleanup, write } from "./helpers.js";
 
@@ -166,20 +167,24 @@ describe("read_file pagination", () => {
 });
 
 describe("read_image", () => {
-  it("reads PNG, JPEG, WEBP and GIF files with MIME metadata", async () => {
-    const fixtures: Array<{ name: string; bytes: Buffer; mimeType: string }> = [
-      { name: "screen.png", bytes: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), mimeType: "image/png" },
-      { name: "photo.jpg", bytes: Buffer.from([0xff, 0xd8, 0xff, 0xd9]), mimeType: "image/jpeg" },
-      { name: "preview.webp", bytes: Buffer.from("RIFF0000WEBP", "ascii"), mimeType: "image/webp" },
-      { name: "animation.gif", bytes: Buffer.from("GIF89a", "ascii"), mimeType: "image/gif" },
+  it("reads real 1x1 PNG, JPEG, WEBP and GIF files with dimensions", async () => {
+    const fixtures: Array<{ name: string; base64: string; mimeType: string }> = [
+      { name: "screen.png", base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", mimeType: "image/png" },
+      { name: "photo.jpg", base64: "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDi6KKK+ZP3E//Z", mimeType: "image/jpeg" },
+      { name: "preview.webp", base64: "UklGRjwAAABXRUJQVlA4IDAAAADQAQCdASoBAAEAAUAmJaACdLoB+AADsAD+8ut//NgVzXPv9//S4P0uD9Lg/9KQAAA=", mimeType: "image/webp" },
+      { name: "animation.gif", base64: "R0lGODdhAQABAIEAAP8AAAAAAAAAAAAAACwAAAAAAQABAAAIBAABBAQAOw==", mimeType: "image/gif" },
     ];
 
     for (const fixture of fixtures) {
-      fs.writeFileSync(path.join(root, fixture.name), fixture.bytes);
+      const bytes = Buffer.from(fixture.base64, "base64");
+      fs.writeFileSync(path.join(root, fixture.name), bytes);
       const result = await ws.readImage(fixture.name);
       expect(result.mimeType).toBe(fixture.mimeType);
-      expect(result.sizeBytes).toBe(fixture.bytes.length);
-      expect(Buffer.from(result.dataBase64, "base64")).toEqual(fixture.bytes);
+      expect(result.source).toBe("workspace");
+      expect(result.width).toBe(1);
+      expect(result.height).toBe(1);
+      expect(result.sizeBytes).toBe(bytes.length);
+      expect(Buffer.from(result.dataBase64, "base64")).toEqual(bytes);
     }
   });
 
@@ -189,6 +194,22 @@ describe("read_image", () => {
 
     fs.writeFileSync(path.join(root, "wrong.png"), Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
     await expect(ws.readImage("wrong.png")).rejects.toMatchObject({ code: "INVALID_IMAGE" });
+  });
+
+  it("reads an explicitly authorized Codex clipboard attachment and rejects arbitrary temp files", async () => {
+    const attachment = path.join(os.tmpdir(), "codex-clipboard-test-12345678.png");
+    const bytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", "base64");
+    fs.writeFileSync(attachment, bytes);
+    try {
+      const result = await ws.readImage(attachment, { attachment: true });
+      expect(result.source).toBe("attachment");
+      expect(result.path).toBe("attachment/codex-clipboard-test-12345678.png");
+      expect(result.width).toBe(1);
+      await expect(ws.readImage(attachment)).rejects.toMatchObject({ code: "PATH_OUTSIDE_WORKSPACE" });
+      await expect(ws.readImage(path.join(os.tmpdir(), "ordinary.png"), { attachment: true })).rejects.toMatchObject({ code: "ATTACHMENT_NOT_ALLOWED" });
+    } finally {
+      fs.rmSync(attachment, { force: true });
+    }
   });
 
   it("enforces workspace and sensitive-file boundaries", async () => {
@@ -201,10 +222,17 @@ describe("read_image", () => {
 
   it("rejects images larger than 10 MB", async () => {
     fs.writeFileSync(path.join(root, "large.png"), Buffer.concat([
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", "base64"),
       Buffer.alloc(10 * 1024 * 1024),
     ]));
     await expect(ws.readImage("large.png")).rejects.toMatchObject({ code: "IMAGE_TOO_LARGE" });
+  });
+
+  it("rejects images whose declared dimensions exceed the safety limit", async () => {
+    const oversized = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==", "base64");
+    oversized.writeUInt32BE(9000, 16);
+    fs.writeFileSync(path.join(root, "oversized-dimensions.png"), oversized);
+    await expect(ws.readImage("oversized-dimensions.png")).rejects.toMatchObject({ code: "IMAGE_DIMENSIONS_TOO_LARGE" });
   });
 });
 

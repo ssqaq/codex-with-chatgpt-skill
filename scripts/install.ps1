@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [string]$Checkout = (Join-Path $HOME "codex-with-chatgpt"),
   [string]$SkillDirectory = (Join-Path $HOME ".codex\skills\codex-with-chatgpt"),
@@ -74,3 +74,4 @@ Write-Host "安装完成。"
 Write-Host "项目目录：$Checkout"
 Write-Host "Skill 文件：$targetSkill"
 Write-Host "连接器名称规则：Codex with ChatGPT · <项目名>"
+

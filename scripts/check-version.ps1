@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [string]$CurrentVersion,
   [string]$Repository = "ssqaq/codex-with-chatgpt-skill"
@@ -18,3 +18,4 @@ Write-Host ("是否需要更新：" + $(if ($needsUpdate) { "是" } else { "否"
 if ($needsUpdate) {
   exit 10
 }
+

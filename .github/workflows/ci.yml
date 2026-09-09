@@ -36,6 +36,9 @@ jobs:
         run: pnpm test
       - name: 构建
         run: pnpm build
+      - name: 检查两份 Skill 一致
+        working-directory: .
+        run: cmp --silent SKILL.md core/skill/SKILL.md
       - name: 检查安装脚本
         working-directory: .
         run: |

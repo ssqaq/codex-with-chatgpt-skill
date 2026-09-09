@@ -8,15 +8,15 @@
  *   5. exchange authorization code (PKCE) for tokens
  *   6. call MCP tools (workspace_info, read_file hello.txt)
  *
- * Usage: node scripts/poc-client.mjs <baseUrl> <pairingCode>
+ * Usage: node scripts/poc-client.mjs <baseUrl> <pairingCode> [imagePath]
  */
 import { createHash, randomBytes } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-const [base, pairingCode] = process.argv.slice(2);
+const [base, pairingCode, imagePath] = process.argv.slice(2);
 if (!base || !pairingCode) {
-  console.error("usage: node scripts/poc-client.mjs <baseUrl> <pairingCode>");
+  console.error("usage: node scripts/poc-client.mjs <baseUrl> <pairingCode> [imagePath]");
   process.exit(1);
 }
 
@@ -121,6 +121,17 @@ const helloJson = JSON.parse(hello.content[0].text);
 console.log(`   read_file hello.txt -> "${helloJson.content.trim()}"`);
 const env = await client.callTool({ name: "read_file", arguments: { path: ".env" } });
 console.log(`   read_file .env -> denied: ${env.isError === true}`);
+if (imagePath) {
+  const attachment = /(?:^|[\\/])codex-clipboard-[a-z0-9-]+\.(?:png|jpe?g|webp|gif)$/i.test(imagePath);
+  const image = await client.callTool({ name: "read_image", arguments: { path: imagePath, attachment } });
+  if (image.isError) {
+    console.error("   read_image failed");
+    process.exit(2);
+  }
+  const metadata = JSON.parse(image.content.find((item) => item.type === "text")?.text ?? "{}");
+  const imageBlock = image.content.find((item) => item.type === "image");
+  console.log(`   read_image ${metadata.path} -> ${metadata.mimeType}, ${metadata.width}x${metadata.height}, image block: ${imageBlock?.type === "image"}`);
+}
 await client.close();
 
 console.log("\nPoC PASSED: full OAuth + pairing + MCP loop works.");

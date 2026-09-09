@@ -35,6 +35,14 @@ export const PROTOCOL_STATES: readonly ProtocolState[] = [
 
 export const WAITING_FOR: readonly WaitingFor[] = ["none", "GPT_PLAN", "GPT_REVIEW", "GPT_CONSENSUS", "USER"];
 
+const CONSENSUS_EXECUTION_STATES: readonly ProtocolState[] = [
+  "PLAN_RECEIVED",
+  "EXECUTING",
+  "EXECUTED_LOCAL",
+  "EXECUTED_SENT",
+  "DONE",
+];
+
 export interface TaskCheckpoint {
   taskId: string;
   iteration: number;
@@ -252,6 +260,12 @@ export function mergeSession(previous: SavedSession | null, patch: SessionPatch)
     ) {
       throw new Error("consensus-repeats must be a non-negative integer");
     }
+    const consensusMode = patch.checkpoint.consensusMode ?? previous?.checkpoint?.consensusMode;
+    const codexConsensus = patch.checkpoint.codexConsensus ?? previous?.checkpoint?.codexConsensus;
+    const chatgptConsensus = patch.checkpoint.chatgptConsensus ?? previous?.checkpoint?.chatgptConsensus;
+    if (consensusMode && CONSENSUS_EXECUTION_STATES.includes(protocolState) && !(codexConsensus && chatgptConsensus)) {
+      throw new Error("consensus confirmations are required before execution");
+    }
     checkpoint = {
       taskId,
       iteration,
@@ -275,7 +289,7 @@ export function mergeSession(previous: SavedSession | null, patch: SessionPatch)
       ),
       chatUrl: patch.checkpoint.chatUrl ?? previous?.checkpoint?.chatUrl ?? url,
       projectUrl: patch.checkpoint.projectUrl ?? previous?.checkpoint?.projectUrl ?? projectUrl,
-      consensusMode: patch.checkpoint.consensusMode ?? previous?.checkpoint?.consensusMode,
+      consensusMode,
       consensusRound,
       consensusPlan: capCheckpointText(
         patch.checkpoint.consensusPlan ?? previous?.checkpoint?.consensusPlan,
@@ -290,8 +304,8 @@ export function mergeSession(previous: SavedSession | null, patch: SessionPatch)
         CHECKPOINT_LIMITS.consensusDisagreementFingerprint
       ),
       consensusRepeatedRounds,
-      codexConsensus: patch.checkpoint.codexConsensus ?? previous?.checkpoint?.codexConsensus,
-      chatgptConsensus: patch.checkpoint.chatgptConsensus ?? previous?.checkpoint?.chatgptConsensus,
+      codexConsensus,
+      chatgptConsensus,
       updatedAt: new Date().toISOString(),
     };
   }

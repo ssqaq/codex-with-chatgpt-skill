@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [string]$Checkout = (Join-Path $HOME "codex-with-chatgpt"),
   [string]$SkillDirectory = (Join-Path $HOME ".codex\skills\codex-with-chatgpt")
@@ -17,3 +17,4 @@ try {
   throw
 }
 Write-Host "更新完成。"
+
