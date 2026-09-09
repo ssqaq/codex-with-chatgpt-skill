@@ -2,7 +2,7 @@
 
 这是一个给 Codex 用的 Skill。它把 ChatGPT 当作“参谋”：ChatGPT 帮忙分析、规划和检查，Codex 负责真正修改项目、运行命令和测试。
 
-当前版本：`1.15.0`。唯一主仓库：<https://github.com/ssqaq/codex-with-chatgpt-skill>
+当前版本：`1.15.1`。唯一主仓库：<https://github.com/ssqaq/codex-with-chatgpt-skill>
 
 ## 一句话说明
 

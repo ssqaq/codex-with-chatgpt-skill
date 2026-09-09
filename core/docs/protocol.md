@@ -73,6 +73,14 @@ the current task cannot switch, send a HANDOFF to a normal task in the same
 workspace and with the same connector. Never edit Codex SQLite/JSONL history and
 never wait for the user to toggle a top-bar mode button.
 
+If the client rejects the normal-task creation, fork, or mode-switch operation,
+stop waiting immediately and report `BLOCKED` with reason
+`PLAN_MODE_UNAVAILABLE`. Do not poll forever, resend the same prompt, or claim
+that execution started; preserve the original task and history.
+If the normal task or HANDOFF cannot be created, or two consecutive checks show
+no state change, stop polling and report `PLAN_MODE_FALLBACK_BLOCKED`. Do not
+resend the same message and do not modify local Codex databases.
+
 ### INIT (Codex → ChatGPT)
 
 ```
