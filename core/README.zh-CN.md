@@ -49,7 +49,10 @@ Agent（Codex），然后去倒杯咖啡：
 
 1. 安装 Codex Skill：把 `skill/` 复制到 `~/.codex/skills/codex-with-chatgpt/`。
 2. 对 Codex 说：**"使用 Codex with ChatGPT 完成首次配置。"**
-3. 之后正常使用：**"使用 Codex with ChatGPT，帮我实现 XXX。"**
+3. 之后正常使用：**“使用 Codex with ChatGPT，帮我实现 XXX。”**
+
+如果想先讨论方案再改代码，可以说：**“先做方案，多轮评审后再修改这个功能。”**
+Codex 会显示当前第几轮，把纯文字方案发给网页版 GPT 评审，双方确认共识后才开始修改。
 
 说明书到此结束。你不需要知道 MCP、OAuth、Tunnel、端口、localhost 是什么——
 Codex 会自动完成所有配置，你只会看到：

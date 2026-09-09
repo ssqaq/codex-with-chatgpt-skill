@@ -65,6 +65,16 @@ Windows 在 PowerShell 运行 `scripts/install.ps1`；macOS/Linux 在终端运�
 - 修改代码并测试
 - 让 ChatGPT 复核修改结果
 
+## 多轮方案评审
+
+如果你希望先把方案讨论清楚，再开始改代码，可以直接说：
+
+> 先做方案，多轮评审后再修改这个功能。
+
+Codex 会显示“多轮评审：第 N 轮”，把纯文字方案发给当前网页版 GPT-5.6
+Sol + Pro 最高强度评审，双方确认 `CONSENSUS` 后才修改文件。普通请求仍然
+走快速流程；当前版本暂不包含图片直接读取。
+
 ## 安装
 
 把 `SKILL.md` 放到 Codex 的 Skill 目录：

@@ -8,6 +8,9 @@ export type ConversationReason = "existing-long-chat" | "project" | "new-workspa
 
 export type ProtocolState =
   | "INIT"
+  | "CONSENSUS_PLAN"
+  | "CONSENSUS_REVIEW"
+  | "CONSENSUS"
   | "PLAN_RECEIVED"
   | "EXECUTING"
   | "EXECUTED_LOCAL"
@@ -15,10 +18,13 @@ export type ProtocolState =
   | "DONE"
   | "BLOCKED";
 
-export type WaitingFor = "none" | "GPT_PLAN" | "GPT_REVIEW" | "USER";
+export type WaitingFor = "none" | "GPT_PLAN" | "GPT_REVIEW" | "GPT_CONSENSUS" | "USER";
 
 export const PROTOCOL_STATES: readonly ProtocolState[] = [
   "INIT",
+  "CONSENSUS_PLAN",
+  "CONSENSUS_REVIEW",
+  "CONSENSUS",
   "PLAN_RECEIVED",
   "EXECUTING",
   "EXECUTED_LOCAL",
@@ -27,7 +33,7 @@ export const PROTOCOL_STATES: readonly ProtocolState[] = [
   "BLOCKED",
 ];
 
-export const WAITING_FOR: readonly WaitingFor[] = ["none", "GPT_PLAN", "GPT_REVIEW", "USER"];
+export const WAITING_FOR: readonly WaitingFor[] = ["none", "GPT_PLAN", "GPT_REVIEW", "GPT_CONSENSUS", "USER"];
 
 export interface TaskCheckpoint {
   taskId: string;
@@ -40,6 +46,14 @@ export interface TaskCheckpoint {
   nextExpectedStep?: string;
   chatUrl?: string;
   projectUrl?: string;
+  consensusMode?: boolean;
+  consensusRound?: number;
+  consensusPlan?: string;
+  consensusDisagreement?: string;
+  consensusDisagreementFingerprint?: string;
+  consensusRepeatedRounds?: number;
+  codexConsensus?: boolean;
+  chatgptConsensus?: boolean;
   updatedAt: string;
 }
 
@@ -167,6 +181,9 @@ const CHECKPOINT_LIMITS = {
   completedSubtasks: 800,
   knownIssues: 800,
   nextExpectedStep: 400,
+  consensusPlan: 1200,
+  consensusDisagreement: 800,
+  consensusDisagreementFingerprint: 128,
 } as const;
 
 function capCheckpointText(value: string | undefined, max: number): string | undefined {
@@ -223,6 +240,18 @@ export function mergeSession(previous: SavedSession | null, patch: SessionPatch)
     if (!WAITING_FOR.includes(waitingFor)) {
       throw new Error(`waiting-for must be one of ${WAITING_FOR.join(", ")}`);
     }
+    const consensusRound = patch.checkpoint.consensusRound ?? previous?.checkpoint?.consensusRound;
+    if (consensusRound !== undefined && (!Number.isInteger(consensusRound) || consensusRound < 1)) {
+      throw new Error("consensus-round must be a positive integer");
+    }
+    const consensusRepeatedRounds =
+      patch.checkpoint.consensusRepeatedRounds ?? previous?.checkpoint?.consensusRepeatedRounds;
+    if (
+      consensusRepeatedRounds !== undefined &&
+      (!Number.isInteger(consensusRepeatedRounds) || consensusRepeatedRounds < 0)
+    ) {
+      throw new Error("consensus-repeats must be a non-negative integer");
+    }
     checkpoint = {
       taskId,
       iteration,
@@ -246,6 +275,23 @@ export function mergeSession(previous: SavedSession | null, patch: SessionPatch)
       ),
       chatUrl: patch.checkpoint.chatUrl ?? previous?.checkpoint?.chatUrl ?? url,
       projectUrl: patch.checkpoint.projectUrl ?? previous?.checkpoint?.projectUrl ?? projectUrl,
+      consensusMode: patch.checkpoint.consensusMode ?? previous?.checkpoint?.consensusMode,
+      consensusRound,
+      consensusPlan: capCheckpointText(
+        patch.checkpoint.consensusPlan ?? previous?.checkpoint?.consensusPlan,
+        CHECKPOINT_LIMITS.consensusPlan
+      ),
+      consensusDisagreement: capCheckpointText(
+        patch.checkpoint.consensusDisagreement ?? previous?.checkpoint?.consensusDisagreement,
+        CHECKPOINT_LIMITS.consensusDisagreement
+      ),
+      consensusDisagreementFingerprint: capCheckpointText(
+        patch.checkpoint.consensusDisagreementFingerprint ?? previous?.checkpoint?.consensusDisagreementFingerprint,
+        CHECKPOINT_LIMITS.consensusDisagreementFingerprint
+      ),
+      consensusRepeatedRounds,
+      codexConsensus: patch.checkpoint.codexConsensus ?? previous?.checkpoint?.codexConsensus,
+      chatgptConsensus: patch.checkpoint.chatgptConsensus ?? previous?.checkpoint?.chatgptConsensus,
       updatedAt: new Date().toISOString(),
     };
   }

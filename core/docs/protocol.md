@@ -8,12 +8,15 @@ Never mix the two: control messages carry state, never content.
 ## States
 
 ```
-INIT → PLAN → EXECUTING → EXECUTED → REVIEW → PLAN | DONE | BLOCKED | ERROR
+INIT → CONSENSUS_PLAN ↔ CONSENSUS_REVIEW → CONSENSUS → PLAN → EXECUTING → EXECUTED → REVIEW → PLAN | DONE | BLOCKED | ERROR
 ```
 
 | State | Sender | Meaning |
 | --- | --- | --- |
 | INIT | Codex | New task; asks ChatGPT to inspect + plan |
+| CONSENSUS_PLAN | Codex | Text-only draft plan submitted for review |
+| CONSENSUS_REVIEW | ChatGPT | Review of the current draft; revise or confirm |
+| CONSENSUS | both | Both sides explicitly confirmed the final plan |
 | PLAN | ChatGPT | Executable plan for the next iteration |
 | EXECUTING | Codex | (optional) execution in progress |
 | EXECUTED | Codex | Iteration finished; metadata only |
@@ -34,6 +37,9 @@ Local checkpoint values (session only):
 | Checkpoint | Meaning |
 | --- | --- |
 | `INIT` | INIT sent; waiting for PLAN |
+| `CONSENSUS_PLAN` | Codex draft sent; waiting for ChatGPT consensus review |
+| `CONSENSUS_REVIEW` | ChatGPT review received; Codex prepares the next round |
+| `CONSENSUS` | Both sides confirmed; execution may begin |
 | `PLAN_RECEIVED` | PLAN in hand; not finished executing |
 | `EXECUTING` | Codex is applying the current PLAN |
 | `EXECUTED_LOCAL` | Recorded locally; EXECUTED not yet typed |
@@ -97,6 +103,62 @@ SUCCESS_CRITERIA:
 ```
 
 Plans must be finite, concrete, executable. Not 40-step epics.
+
+### Text-only consensus loop
+
+When the user explicitly asks for multi-round planning, Codex first shows the
+draft and then sends a compact control message to the same ChatGPT chat:
+
+```
+[C2C]
+STATE: CONSENSUS_PLAN
+TASK_ID: c2c_f81a
+ROUND: 1
+
+PLAN_SUMMARY:
+...
+
+REQUEST:
+Review this plan through MCP. Return CONSENSUS_REVIEW with agreements,
+disagreements, concrete changes, tests, and either REVISE or CONSENSUS.
+```
+
+ChatGPT responds with:
+
+```
+[C2C]
+STATE: CONSENSUS_REVIEW
+TASK_ID: c2c_f81a
+ROUND: 1
+DECISION: REVISE
+
+AGREEMENTS:
+...
+
+DISAGREEMENTS:
+...
+
+REVISED_PLAN:
+...
+```
+
+Codex displays the round summary, revises the plan, and sends the next
+`CONSENSUS_PLAN`. ChatGPT must return `DECISION: CONSENSUS` only when the
+scope, files, tests, and success criteria are settled. Codex then sends its
+own confirmation:
+
+```
+[C2C]
+STATE: CONSENSUS
+TASK_ID: c2c_f81a
+ROUND: 2
+CODEX_CONFIRMATION: CONSENSUS
+```
+
+No file mutation is allowed before both confirmations. If the normalized
+disagreement fingerprint is unchanged for two consecutive rounds, Codex sends
+`STATE: BLOCKED` locally, displays the repeated disagreement, and waits for
+the user. `STOP` from the user cancels the loop without execution.
 
 ### EXECUTED (Codex → ChatGPT)
 

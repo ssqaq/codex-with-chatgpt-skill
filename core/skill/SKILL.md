@@ -24,6 +24,42 @@ description: >
 
 不需要输入 `/skill`。
 
+## 纯文字多轮方案评审
+
+当用户明确说“先做方案、多轮评审后再修改”“和 ChatGPT 讨论到共识”或
+“先敲定方案，再自动改代码”时，启用纯文字共识流程；普通功能请求继续
+使用快速流程。
+
+流程固定为：
+
+1. Codex 读取当前工作区，生成纯文字初步方案，并显示 `多轮评审：第 1 轮`。
+2. Codex 把方案摘要自动发到当前网页版 ChatGPT 会话；优先使用 GPT-5.6
+   Sol + Pro（最高推理强度）。
+3. ChatGPT 返回同意项、分歧项和修订建议；Codex 在回复中显示当前轮次和
+   简要结果，不显示内部思考、完整日志或完整文件内容。
+4. Codex 修订方案并自动进入下一轮，每次都显示 `多轮评审：第 N 轮`。
+5. ChatGPT 明确返回 `DECISION: CONSENSUS` 后，Codex 检查方案是否包含修改
+   范围、文件方向、测试方法和成功标准，再发送自己的 `CONSENSUS` 确认。
+6. 双方确认前禁止修改文件；双方确认后显示最终轮次并直接执行修改和测试，
+   然后进入原有的代码复核流程。
+
+每轮回显使用以下格式：
+
+```text
+多轮评审：第 N 轮
+当前状态：Codex 提交方案 / ChatGPT 正在评审 / 方案需要修改
+方案摘要：……
+分歧摘要：……
+下一步：……
+```
+
+如果同一个分歧连续两轮没有实质变化，显示“多轮评审：已暂停”，记录分歧并
+等待用户；用户说“停止”时立即取消，不执行修改。重启或旧会话恢复时，先显示
+`多轮评审：恢复第 N 轮`，继续原会话、原连接器，不新建或重复配对。
+
+本阶段只处理纯文字方案。图片读取、截图直接分析和图片布局复核暂不启用，
+必须等纯文字多轮评审测试通过后另行评估。
+
 ## 推荐模型
 
 在内置 ChatGPT 会话中，优先选择 **GPT-5.6 Sol**，思考强度选择 **Pro（最高）**。如果当前账号看不到这个模型，使用列表里实际可用的最高模型，并如实告诉用户。
@@ -554,9 +590,9 @@ no 40-step epics. Use C2C control messages.
 
 ## Workflow: coding task（"使用 Codex with ChatGPT 完成 XXX"）
 
-Protocol states sent to ChatGPT: INIT → PLAN → EXECUTING → EXECUTED → REVIEW → (PLAN | DONE | BLOCKED).
+Protocol states sent to ChatGPT: INIT → (CONSENSUS_PLAN ↔ CONSENSUS_REVIEW → CONSENSUS)? → PLAN → EXECUTING → EXECUTED → REVIEW → (PLAN | DONE | BLOCKED).
 Local checkpoint states (session only, never a ChatGPT `STATE:` line):
-`INIT`, `PLAN_RECEIVED`, `EXECUTING`, `EXECUTED_LOCAL`, `EXECUTED_SENT`, `DONE`, `BLOCKED`.
+`INIT`, `CONSENSUS_PLAN`, `CONSENSUS_REVIEW`, `CONSENSUS`, `PLAN_RECEIVED`, `EXECUTING`, `EXECUTED_LOCAL`, `EXECUTED_SENT`, `DONE`, `BLOCKED`.
 Do not invent `STATE: RESUME`. If the original chat is gone, send HANDOFF.
 All control messages start with `[C2C]`. Keep Codex→ChatGPT messages under 1 KB.
 ChatGPT's replies are expected to be substantive (see step 3). Docs: `docs/protocol.md`.
@@ -597,12 +633,19 @@ ChatGPT's replies are expected to be substantive (see step 3). Docs: `docs/proto
      it; otherwise HANDOFF and ask ChatGPT to restate the last PLAN. Do not
      treat it as done and do not INIT a new task.
    - `PLAN_RECEIVED`: execute that plan. Do not INIT.
+   - `CONSENSUS_PLAN` / `CONSENSUS_REVIEW` / `waitingFor=GPT_CONSENSUS`: show the saved round and continue the same consensus loop. Do not restart at round 1.
    - `INIT` / `waitingFor=GPT_PLAN`: claim the tab and wait. Do not resend INIT.
    - `DONE`: summarize to the user if needed; `c2c session set --clear-checkpoint`.
    - `BLOCKED`: surface ChatGPT's reason; do not INIT.
    Never re-pair, never recreate the connector, and never rewrite Project
    instructions just to resume.
 2. Send INIT with the user's goal (skip when the checkpoint says not to):
+
+   If the request matched **纯文字多轮方案评审**, do not send the normal INIT
+   first. Generate the Codex draft locally, display `多轮评审：第 1 轮`, save a
+   `CONSENSUS_PLAN` checkpoint with `waitingFor=GPT_CONSENSUS`, and send the
+   compact `CONSENSUS_PLAN` message from `docs/protocol.md`. The normal INIT →
+   PLAN path below is used only when consensus mode was not triggered.
 
 ```
 [C2C]

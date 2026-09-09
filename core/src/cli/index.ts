@@ -929,6 +929,13 @@ session
         say(
           `存档：${saved.checkpoint.protocolState} / 等待 ${saved.checkpoint.waitingFor}（第 ${saved.checkpoint.iteration} 轮）`
         );
+        if (saved.checkpoint.consensusMode) {
+          say(
+            `多轮评审：第 ${saved.checkpoint.consensusRound ?? saved.checkpoint.iteration} 轮 / ` +
+              `Codex ${saved.checkpoint.codexConsensus ? "已确认" : "未确认"} / ` +
+              `ChatGPT ${saved.checkpoint.chatgptConsensus ? "已确认" : "未确认"}`
+          );
+        }
       }
     }
   });
@@ -946,11 +953,19 @@ session
   .option("--project-url <url>", "ChatGPT Project collection URL (…/g/g-p-…/project)")
   .option("--connector-name <name>", "exact connector title for this workspace")
   .option("--protocol-state <state>", "checkpoint protocol state, e.g. EXECUTED_SENT")
-  .option("--waiting-for <who>", "none | GPT_PLAN | GPT_REVIEW | USER")
+  .option("--waiting-for <who>", "none | GPT_PLAN | GPT_REVIEW | GPT_CONSENSUS | USER")
   .option("--goal <text>", "original task goal for resume / HANDOFF")
   .option("--completed-subtasks <text>")
   .option("--known-issues <text>")
   .option("--next-step <text>")
+  .option("--consensus-mode <boolean>", "whether the consensus workflow is active")
+  .option("--consensus-round <n>", "current consensus round")
+  .option("--consensus-plan <text>", "short current consensus plan")
+  .option("--consensus-disagreement <text>", "short current disagreement")
+  .option("--consensus-fingerprint <text>", "normalized disagreement fingerprint")
+  .option("--consensus-repeats <n>", "consecutive repeated disagreement count")
+  .option("--codex-consensus <boolean>", "whether Codex confirmed consensus")
+  .option("--chatgpt-consensus <boolean>", "whether ChatGPT confirmed consensus")
   .option("--clear-checkpoint", "drop the active checkpoint (task DONE)", false)
   .action(
     (opts: {
@@ -969,6 +984,14 @@ session
       completedSubtasks?: string;
       knownIssues?: string;
       nextStep?: string;
+      consensusMode?: string;
+      consensusRound?: string;
+      consensusPlan?: string;
+      consensusDisagreement?: string;
+      consensusFingerprint?: string;
+      consensusRepeats?: string;
+      codexConsensus?: string;
+      chatgptConsensus?: string;
       clearCheckpoint: boolean;
     }) => {
       const workspace = new Workspace(resolveWorkspace(opts.workspace));
@@ -989,6 +1012,13 @@ session
       if (waitingNorm && !WAITING_FOR.includes(waitingNorm as WaitingFor)) {
         throw new Error(`waiting-for must be one of ${WAITING_FOR.join(", ")}`);
       }
+      const parseOptionalBoolean = (value: string | undefined, label: string): boolean | undefined => {
+        if (value === undefined) return undefined;
+        const normalized = value.trim().toLowerCase();
+        if (normalized === "true" || normalized === "1" || normalized === "yes") return true;
+        if (normalized === "false" || normalized === "0" || normalized === "no") return false;
+        throw new Error(`${label} must be true or false`);
+      };
       const saved = mergeSession(readSession(workspace.id), {
         url: opts.url,
         title: opts.title,
@@ -1007,6 +1037,14 @@ session
               completedSubtasks: opts.completedSubtasks,
               knownIssues: opts.knownIssues,
               nextExpectedStep: opts.nextStep,
+              consensusMode: parseOptionalBoolean(opts.consensusMode, "consensus-mode"),
+              consensusRound: opts.consensusRound ? parseInt(opts.consensusRound, 10) : undefined,
+              consensusPlan: opts.consensusPlan,
+              consensusDisagreement: opts.consensusDisagreement,
+              consensusDisagreementFingerprint: opts.consensusFingerprint,
+              consensusRepeatedRounds: opts.consensusRepeats ? parseInt(opts.consensusRepeats, 10) : undefined,
+              codexConsensus: parseOptionalBoolean(opts.codexConsensus, "codex-consensus"),
+              chatgptConsensus: parseOptionalBoolean(opts.chatgptConsensus, "chatgpt-consensus"),
             }
           : undefined,
       });

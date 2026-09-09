@@ -159,6 +159,80 @@ describe("mergeSession", () => {
     expect(next.checkpoint?.originalGoal?.endsWith("…")).toBe(true);
   });
 
+  it("persists the text-only consensus round and both confirmations", () => {
+    const next = mergeSession(
+      {
+        url: "https://chatgpt.com/c/consensus",
+        taskId: "c2c_consensus",
+        savedAt: "2026-01-01T00:00:00.000Z",
+      },
+      {
+        checkpoint: {
+          protocolState: "CONSENSUS_REVIEW",
+          waitingFor: "GPT_CONSENSUS",
+          consensusMode: true,
+          consensusRound: 2,
+          consensusPlan: "Update the settings flow and add regression tests.",
+          consensusDisagreement: "Whether the legacy path remains supported.",
+          consensusDisagreementFingerprint: "legacy-path",
+          consensusRepeatedRounds: 1,
+          codexConsensus: false,
+          chatgptConsensus: false,
+        },
+      }
+    );
+    expect(next.checkpoint?.protocolState).toBe("CONSENSUS_REVIEW");
+    expect(next.checkpoint?.waitingFor).toBe("GPT_CONSENSUS");
+    expect(next.checkpoint?.consensusMode).toBe(true);
+    expect(next.checkpoint?.consensusRound).toBe(2);
+    expect(next.checkpoint?.consensusDisagreementFingerprint).toBe("legacy-path");
+
+    const agreed = mergeSession(next, {
+      checkpoint: {
+        protocolState: "CONSENSUS",
+        waitingFor: "none",
+        codexConsensus: true,
+        chatgptConsensus: true,
+      },
+    });
+    expect(agreed.checkpoint?.protocolState).toBe("CONSENSUS");
+    expect(agreed.checkpoint?.codexConsensus).toBe(true);
+    expect(agreed.checkpoint?.chatgptConsensus).toBe(true);
+    expect(agreed.checkpoint?.consensusRound).toBe(2);
+  });
+
+  it("caps consensus text and keeps legacy checkpoints compatible", () => {
+    const next = mergeSession(
+      { url: "https://chatgpt.com/c/consensus", taskId: "c2c_consensus", savedAt: "2026-01-01T00:00:00.000Z" },
+      {
+        checkpoint: {
+          protocolState: "CONSENSUS_PLAN",
+          consensusPlan: "x".repeat(1400),
+          consensusDisagreement: "y".repeat(900),
+          consensusDisagreementFingerprint: "z".repeat(200),
+        },
+      }
+    );
+    expect(next.checkpoint?.consensusPlan?.length).toBeLessThanOrEqual(1201);
+    expect(next.checkpoint?.consensusDisagreement?.length).toBeLessThanOrEqual(801);
+    expect(next.checkpoint?.consensusDisagreementFingerprint?.length).toBeLessThanOrEqual(129);
+  });
+
+  it("rejects invalid consensus round counters", () => {
+    expect(() =>
+      mergeSession(
+        { url: "https://chatgpt.com/c/consensus", taskId: "c2c_consensus", savedAt: "2026-01-01T00:00:00.000Z" },
+        { checkpoint: { protocolState: "CONSENSUS_PLAN", consensusRound: 0 } }
+      )
+    ).toThrow(/consensus-round/);
+    expect(() =>
+      mergeSession(
+        { url: "https://chatgpt.com/c/consensus", taskId: "c2c_consensus", savedAt: "2026-01-01T00:00:00.000Z" },
+        { checkpoint: { protocolState: "CONSENSUS_REVIEW", consensusRepeatedRounds: -1 } }
+      )
+    ).toThrow(/consensus-repeats/);
+  });
+
   it("leaves legacy sessions without a checkpoint unchanged", () => {
     const next = mergeSession(
       {
