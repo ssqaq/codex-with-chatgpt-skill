@@ -10,6 +10,26 @@
 
 不需要输入 `/skill`。
 
+## 安装步骤（看图就会）
+
+### 第一步：安装
+
+Windows 在 PowerShell 运行 `scripts/install.ps1`；macOS/Linux 在终端运行 `bash scripts/install.sh`。脚本会自动检查环境、下载项目、构建并安装 Skill。
+
+![一键安装流程](docs/images/install-flow.svg)
+
+### 第二步：填写连接器
+
+连接器名称统一填写：`Codex with ChatGPT · <项目名>`。例如项目名是 `my-app`，就填写 `Codex with ChatGPT · my-app`，不要填 `1` 或其他临时名字。这样每个项目都能找到自己的连接。
+
+![连接器填写示意图](docs/images/connector-form.svg)
+
+### 第三步：配对
+
+安装脚本完成后，在 ChatGPT 里连接对应名称，输入 Codex 显示的一次性配对码即可。
+
+![配对流程示意图](docs/images/pairing-flow.svg)
+
 ## 适合做什么
 
 - 开发新功能

@@ -28,6 +28,10 @@ description: >
 
 这个 Skill 只让 ChatGPT 读取当前项目并参与规划和检查，实际文件修改仍由 Codex 完成。
 
+## 统一名称
+
+连接器名称统一使用 `Codex with ChatGPT · <项目名>`。创建或连接时必须沿用这个名称，不要使用 `1`、`test` 等临时名称，这样后续每个项目都能准确找到自己的连接。
+
 ChatGPT thinks. Codex works.
 
 You (Codex) own execution: editing, shell, git, tests, recovery.

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="260" viewBox="0 0 900 260">
+  <rect width="900" height="260" rx="18" fill="#f7f8fb"/>
+  <text x="40" y="42" font-family="Arial,sans-serif" font-size="24" font-weight="700" fill="#1f2937">一键安装流程</text>
+  <g font-family="Arial,sans-serif" text-anchor="middle">
+    <rect x="45" y="85" width="220" height="110" rx="14" fill="#2563eb"/>
+    <text x="155" y="125" font-size="20" font-weight="700" fill="white">1. 运行脚本</text>
+    <text x="155" y="157" font-size="15" fill="#dbeafe">自动检查电脑环境</text>
+    <rect x="340" y="85" width="220" height="110" rx="14" fill="#0f766e"/>
+    <text x="450" y="125" font-size="20" font-weight="700" fill="white">2. 自动安装</text>
+    <text x="450" y="157" font-size="15" fill="#ccfbf1">下载、构建、复制 Skill</text>
+    <rect x="635" y="85" width="220" height="110" rx="14" fill="#7c3aed"/>
+    <text x="745" y="125" font-size="20" font-weight="700" fill="white">3. 开始使用</text>
+    <text x="745" y="157" font-size="15" fill="#ede9fe">直接对 Codex 说需求</text>
+  </g>
+  <path d="M275 140h55m-12-9 12 9-12 9M570 140h55m-12-9 12 9-12 9" stroke="#64748b" stroke-width="4" fill="none"/>
+</svg>

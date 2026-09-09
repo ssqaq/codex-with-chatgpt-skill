@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="420" viewBox="0 0 900 420">
+  <rect width="900" height="420" rx="18" fill="#f7f8fb"/>
+  <rect x="230" y="25" width="440" height="370" rx="16" fill="white" stroke="#cbd5e1" stroke-width="2"/>
+  <text x="265" y="65" font-family="Arial,sans-serif" font-size="23" font-weight="700" fill="#1f2937">新建连接器</text>
+  <g font-family="Arial,sans-serif" fill="#475569" font-size="15">
+    <text x="265" y="105">名称</text><rect x="265" y="116" width="370" height="42" rx="7" fill="#f8fafc" stroke="#94a3b8"/><text x="280" y="143" fill="#0f172a">Codex with ChatGPT · my-app</text>
+    <text x="265" y="190">服务器 URL</text><rect x="265" y="201" width="370" height="42" rx="7" fill="#f8fafc" stroke="#94a3b8"/><text x="280" y="228" fill="#0f172a">https://你的连接地址/mcp</text>
+    <text x="265" y="275">身份验证</text><rect x="265" y="286" width="370" height="42" rx="7" fill="#f8fafc" stroke="#94a3b8"/><text x="280" y="313" fill="#0f172a">OAuth</text>
+    <rect x="265" y="345" width="18" height="18" rx="3" fill="#2563eb"/><text x="293" y="360">我了解并希望继续</text>
+  </g>
+</svg>
