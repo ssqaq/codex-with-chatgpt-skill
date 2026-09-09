@@ -10,6 +10,13 @@ description: >
 
 # Codex with ChatGPT
 
+## Recommended ChatGPT model
+
+For the connected in-app ChatGPT conversation, prefer **GPT-5.6 Sol** with
+**Pro (highest) reasoning intensity** when the account exposes it. If it is not
+available, use the highest model actually shown in the model picker and report
+that fact; never claim a model that is not present.
+
 ChatGPT thinks. Codex works.
 
 You (Codex) own execution: editing, shell, git, tests, recovery.
