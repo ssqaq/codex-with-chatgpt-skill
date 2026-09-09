@@ -46,6 +46,8 @@ describe("c2c record", () => {
         "pnpm test",
         "--output",
         "tests passed",
+        "--exit-status",
+        "ok",
         "--exit-code",
         "0",
         "--self-check",
@@ -77,10 +79,29 @@ describe("c2c record", () => {
 
   it("requires the self-check, page verification, and verification timestamp gate", () => {
     withRecordEnvironment((root, workspace) => {
-      const result = runRecord(root, ["--iteration", "1"]);
+      const result = runRecord(root, ["--iteration", "1", "--exit-status", "ok"]);
 
       expect(result.status).toBe(1);
       expect(result.stderr + result.stdout).toMatch(/self-check is required/i);
+      expect(readExecutionRecords(workspace.id)).toEqual([]);
+    });
+  });
+
+  it("requires an explicit exit status", () => {
+    withRecordEnvironment((root, workspace) => {
+      const result = runRecord(root, [
+        "--iteration",
+        "1",
+        "--self-check",
+        "PASS",
+        "--page-verify",
+        "NOT_APPLICABLE",
+        "--verification-at",
+        "2026-01-01T00:00:00.000Z",
+      ]);
+
+      expect(result.status).toBe(1);
+      expect(result.stderr + result.stdout).toMatch(/required option '--exit-status|exit-status.*required/i);
       expect(readExecutionRecords(workspace.id)).toEqual([]);
     });
   });

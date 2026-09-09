@@ -1270,7 +1270,7 @@ program
   .requiredOption("--iteration <n>", "non-negative execution iteration", parseNonNegativeInteger)
   .option("--changed-files <filesOrCount>", "comma-separated files or a count", "0")
   .option("--tests <summary>", "e.g. '27 passed'")
-  .option("--exit-status <status>", "ok | failed | blocked", "ok")
+  .requiredOption("--exit-status <status>", "ok | failed | blocked")
   .option("--notes <text>")
   .option("--self-check <status>", "PASS or FAIL after local checks")
   .option("--page-verify <status>", "PASS, FAIL, or NOT_APPLICABLE")
