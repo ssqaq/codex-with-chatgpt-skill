@@ -41,7 +41,7 @@ description: >
 5. ChatGPT 明确返回 `DECISION: CONSENSUS` 后，Codex 检查方案是否包含修改
    范围、文件方向、测试方法和成功标准，再发送自己的 `CONSENSUS` 确认。
 6. 双方确认前禁止修改文件；双方确认后显示最终轮次并直接执行修改和测试，
-   然后进入原有的代码复核流程。
+   然后必须完成“修改后自检与页面验证”，再进入原有的代码复核流程。
 
 每轮回显使用以下格式：
 
@@ -56,6 +56,35 @@ description: >
 如果同一个分歧连续两轮没有实质变化，显示“多轮评审：已暂停”，记录分歧并
 等待用户；用户说“停止”时立即取消，不执行修改。重启或旧会话恢复时，先显示
 `多轮评审：恢复第 N 轮`，继续原会话、原连接器，不新建或重复配对。
+
+## 修改后自检与页面验证（强制）
+
+每次 Codex 修改文件后都必须自己检查、复核并验证一次，不能只因为代码能编译
+或测试通过就直接提交、推送或同步。顺序固定为：
+
+1. **自动化检查**：按项目实际情况运行受影响模块测试、全量测试、类型检查、构建，
+   并保留命令和结果。没有对应命令时，运行可用的最小 CLI/服务冒烟测试。
+2. **人工复核**：查看 `git diff` 和变更文件，确认只改了计划范围，没有明显逻辑、
+   类型、配置、路径或敏感信息问题；发现问题先修复，再从第 1 步重做。
+3. **页面验证**：只要修改影响网页、桌面页面或连接设置，就用内置 ChatGPT 浏览器
+   检查受影响页面能正常加载，主要入口可操作，刷新/重新打开后仍正常，且没有明显
+   错误提示。禁止为了验证而打开第三方浏览器。没有页面时记录“页面验证：不适用”。
+4. **回显证据**：向用户明确显示 `自动化检查`、`代码复核`、`页面验证` 三项结果，
+   并说明验证范围。任一项失败时，不发送 `EXECUTED`/完成回执，不提交、不推送，
+   先修复并重复全部相关检查。
+5. **同步闸门**：只有三项检查都为“通过”或页面明确“不适用”，并且 ChatGPT 已
+   通过独立复核后，才允许提交和同步 GitHub；同步后还要核对远端提交、版本和发布
+   状态，不能把“正在运行”当成完成。
+
+固定回显格式：
+
+```text
+修改后验证：通过
+自动化检查：通过（测试 / 类型检查 / 构建）
+代码复核：通过（变更范围已核对）
+页面验证：通过（页面或功能）/ 不适用（无页面）
+同步状态：允许同步 / 未通过，继续修复
+```
 
 ## 图片直接读取
 
@@ -694,7 +723,11 @@ Produce a C2C PLAN message.
    ChatGPT does not micro-manage tool calls).
    Before you start:
    `c2c session set -w <ws> --protocol-state EXECUTING --waiting-for none --next-step "finish PLAN then record"`
-5. Record the execution so ChatGPT can read it via MCP. Metadata always:
+5. **强制完成修改后自检与页面验证**（见上节）后，才能记录执行结果。至少要
+   查看一次当前 `git diff`；涉及页面时必须在内置浏览器完成加载、主要入口和刷新
+   检查；不涉及页面时记录 `PAGE_VERIFY: NOT_APPLICABLE`。检查失败就先修复并重做，
+   不得发送 `EXECUTED` 或同步 GitHub。通过后记录执行结果，供 ChatGPT 通过 MCP 读取。
+   Metadata always:
    `c2c record -w <ws> --task c2c_f81a --iteration 1 --changed-files "src/a.ts,src/b.ts" --tests "27 passed" --exit-status ok`
    If this iteration ran a **test / build / lint / typecheck** command, also
    pass that command's output. Write stdout/stderr to a local temp file first,
@@ -705,7 +738,8 @@ Produce a C2C PLAN message.
    If the CLI says the output was not released, still send EXECUTED; ChatGPT
    reviews from git. Then:
    `c2c session set -w <ws> --iteration 1 --state EXECUTED --protocol-state EXECUTED_LOCAL --waiting-for none --next-step "send EXECUTED"`
-6. Send EXECUTED (no diffs, no logs). Tell ChatGPT to use MCP, including
+6. Send EXECUTED (no diffs, no logs) only after the local gate is green. Include the
+   verification fields so the result is auditable. Tell ChatGPT to use MCP, including
    `execution_output` when a readable item exists:
 
 ```
@@ -723,6 +757,11 @@ CHANGED_FILES:
 TESTS:
 27 passed
 
+SELF_CHECK: PASS
+PAGE_VERIFY: PASS | NOT_APPLICABLE
+PAGE_SCOPE:
+<affected page/function, or none>
+
 Please independently inspect the workspace and current git diff through MCP.
 If execution_output lists a readable item for this iteration, list then read it.
 If status is restricted, ignore it and review from git_diff.
@@ -731,7 +770,9 @@ If status is restricted, ignore it and review from git_diff.
    Then:
    `c2c session set -w <ws> --protocol-state EXECUTED_SENT --waiting-for GPT_REVIEW --next-step "wait for PLAN or DONE"`
 7. ChatGPT reviews via MCP (`git_diff`, `read_file`, `read_image`, `test_status`,
-   `execution_output`) and replies DONE / PLAN (next iteration) / BLOCKED.
+   `execution_output`) and independently checks the changed behavior. Its review does not
+   replace the local self-check or page verification. It replies DONE / PLAN (next iteration)
+   / BLOCKED.
 8. Loop. Respect maxIterations (`.c2c.json`, default 12). At the limit, pause and ask
    the user: "已完成 12 轮协作，仍有未解决问题，是否继续？"
 9. On DONE: summarize the result to the user in plain language.

@@ -42,7 +42,7 @@ Local checkpoint values (session only):
 | `CONSENSUS` | Both sides confirmed; execution may begin |
 | `PLAN_RECEIVED` | PLAN in hand; not finished executing |
 | `EXECUTING` | Codex is applying the current PLAN |
-| `EXECUTED_LOCAL` | Recorded locally; EXECUTED not yet typed |
+| `EXECUTED_LOCAL` | Self-check and page gate passed; execution recorded locally; EXECUTED not yet typed |
 | `EXECUTED_SENT` | EXECUTED typed; waiting for review |
 | `DONE` / `BLOCKED` | Terminal; DONE should `--clear-checkpoint` |
 
@@ -163,6 +163,37 @@ The local session checkpoint also rejects `PLAN_RECEIVED`, `EXECUTING`,
 `EXECUTED_*` and `DONE` while consensus mode is active unless both
 `codexConsensus` and `chatgptConsensus` are true.
 
+### Post-change self-check and page verification gate
+
+After every file mutation, Codex must complete this local gate before it records
+or sends `EXECUTED`, commits, pushes, or syncs GitHub:
+
+1. Run the affected tests and, when applicable, the full test suite, typecheck,
+   build, lint, or the smallest available CLI/service smoke test. Record the
+   commands and pass/fail results.
+2. Inspect `git diff` and every changed file. Confirm the diff stays within the
+   agreed scope and has no obvious logic, type, configuration, path, or secret
+   exposure issue. A failure requires fixing the change and repeating the gate.
+3. When the change affects a web page, desktop page, or connection settings,
+   use only the built-in ChatGPT browser to load the affected page, exercise its
+   main entry point, and refresh or reopen it once. Record visible errors or the
+   absence of them. When no page is affected, record `PAGE_VERIFY: NOT_APPLICABLE`.
+4. Show the user the three results: automated checks, code review, and page
+   verification. If any result fails, do not send `EXECUTED`, do not commit or
+   push, and do not claim completion.
+
+The `EXECUTED` control message must include compact evidence:
+
+```
+SELF_CHECK: PASS
+PAGE_VERIFY: PASS | NOT_APPLICABLE
+PAGE_SCOPE: <affected page/function, or none>
+```
+
+`PAGE_VERIFY: PASS` means the page loaded, the main path was usable, and the
+refresh/reopen check showed no obvious error. This local gate is required even
+when the later ChatGPT MCP review is enabled; the two checks are independent.
+
 ### Direct image reading
 
 When a task includes a workspace image, ChatGPT reads it through the read-only
@@ -208,6 +239,11 @@ CHANGED_FILES:
 
 TESTS:
 27 passed
+
+SELF_CHECK: PASS
+PAGE_VERIFY: PASS | NOT_APPLICABLE
+PAGE_SCOPE:
+<affected page/function, or none>
 
 Please independently inspect the workspace and current git diff through MCP.
 If execution_output lists a readable item for this iteration, list then read it.
@@ -316,7 +352,9 @@ Rules:
 3. Use MCP to inspect current code, git status and diff.
 4. Produce concise executable plans.
 5. Codex will execute your plan using its own harness.
-6. After Codex reports EXECUTED, independently inspect the diff.
+6. After Codex reports EXECUTED, independently inspect the diff and the
+   `SELF_CHECK` / `PAGE_VERIFY` evidence. Do not treat those fields as a
+   substitute for your own MCP review.
    If execution_output lists a readable item for this iteration, list
    then read it. If status is restricted, ignore the body and review
    from git.
@@ -334,6 +372,9 @@ Rules:
     you need through MCP, and resume from NEXT_EXPECTED_STEP.
 13. If this chat sits in a ChatGPT Project, use only the connector named
     in that Project's instructions. Do not use another workspace's connector.
+14. Codex must complete automated checks, a self-review of `git diff`, and a
+    built-in-browser page verification when applicable before it sends EXECUTED.
+    If any check fails, expect another execution iteration rather than DONE.
 ```
 
 ## Project instructions
@@ -360,6 +401,10 @@ connector. Never ask anyone to paste file bodies, diffs, or logs. After
 EXECUTED, call execution_output (list, then read) when a readable item
 exists; if status is restricted, review from git instead. Never upload
 the repo into this Project's files or sources.
+
+Every EXECUTED must include `SELF_CHECK: PASS` and either
+`PAGE_VERIFY: PASS` or `PAGE_VERIFY: NOT_APPLICABLE`. These fields are evidence
+of Codex's local gate, not a replacement for your independent MCP review.
 
 When facts conflict, trust this order:
 1. Current code from the connector
