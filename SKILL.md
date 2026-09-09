@@ -230,7 +230,36 @@ Inside the checkout directory (see Locations):
    then `c2c restart -w <workspace>` so the bridge runs the new code, then
    `c2c update-check --force --json` to refresh the cache (should now report up to date).
 5. Tell the user "✓ 已更新到最新版本" — then resume whatever task triggered this.
-   (The updated SKILL.md takes effect from the next Codex session; that's expected.)
+   A newly started Codex task loads the updated `SKILL.md` automatically.
+
+## Workflow: sync an already-open Codex task after a Skill update
+
+Updating the local file cannot rewrite the instructions already loaded by a
+running Codex task. When the user asks to sync an old/open task, keep that
+same task and its existing ChatGPT conversation. Do not create a new task,
+new chat, connector, or pairing.
+
+1. Copy the freshly installed Skill version into the task's local Skill path
+   (the update workflow above already does this).
+2. Use the Codex app's `send_message_to_thread` for the existing task and send
+   this short message, filling in the real version and task id:
+
+```
+Skill 已更新到 <version>。请在当前旧会话中重新读取本机
+`~/.codex/skills/codex-with-chatgpt/SKILL.md` 和当前工作区状态；继续使用
+原会话、原连接器，不新建会话、不重复配对。确认已加载最新规则后，从当前
+任务的下一步继续。历史消息不用重写。
+```
+
+3. Wait for that same task to acknowledge the update, then continue its
+   existing checkpoint/protocol state. If it is in the middle of a turn,
+   queue the message and do not interrupt or restart the turn.
+4. Verify the task still names the same workspace and connector. If the old
+   task is archived or no longer exists, report that fact; do not silently
+   create a replacement task.
+
+This only changes how the next turn behaves. Previous replies in the old
+conversation remain unchanged, which is expected.
 
 ## Connection choice (once per workspace)
 
