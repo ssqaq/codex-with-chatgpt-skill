@@ -943,7 +943,7 @@ program
       } else {
         say(`本机版本：${VERSION}`);
         say(`GitHub 最新版本：${data.latestVersion ?? "暂时无法获取"}`);
-        say(`是否需要更新：${data.latestConfirmed ? (data.updateAvailable ? "是" : "否") : "未确认最新"}`);
+        say(`是否需要更新：${data.latestConfirmed ? (data.updateAvailable ? "是" : "否") : "无法确认"}`);
         if (data.note) say(data.note);
       }
     };
