@@ -187,6 +187,18 @@ The local session checkpoint also rejects `PLAN_RECEIVED`, `EXECUTING`,
 `EXECUTED_*` and `DONE` while consensus mode is active unless both
 `codexConsensus` and `chatgptConsensus` are true.
 
+### Connector and usage fast-fail guard
+
+Waiting for a ChatGPT response must not become an unbounded loop. After each
+control message, Codex performs at most two short checks, about 20–30 seconds
+apart, with a 60-second total wait budget. The following are terminal for the
+current turn after one short retry: `Codex auth token is unavailable`, exhausted
+Codex/Work usage, upstream `HTTP 502`, or two consecutive `workspace_info`
+failures. Codex then records `STATE: BLOCKED` with the current `ROUND`, the
+exact error, and the next step; it does not resend the same round, open another
+chat, re-pair, request a token/API key, or mutate files. A later retry resumes
+from the saved round rather than restarting at round 1.
+
 ### Post-change self-check and page verification gate
 
 After every file mutation, Codex must complete this local gate before it records

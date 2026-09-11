@@ -116,6 +116,10 @@ After consensus, automatically edit the code, run tests, and review the result.
 Task: describe what you want to change or fix.
 ```
 
+If browser authorization is unavailable, the connector returns 502/530, or Codex/Work
+usage is exhausted, the loop pauses within about one minute with the exact reason
+instead of waiting indefinitely. A later retry resumes from the saved round.
+
 That's the whole manual. You don't need to know what MCP, OAuth, tunnels,
 ports or localhost are — Codex configures everything automatically and you
 just see:
@@ -248,7 +252,7 @@ docs/         architecture / protocol / security / troubleshooting
 
 ## Status & disclaimer
 
-Current version 1.15.4. Verified end-to-end: bridge, OAuth + pairing, public tunnel, ChatGPT
+Current version 1.15.5. Verified end-to-end: bridge, OAuth + pairing, public tunnel, ChatGPT
 connector setup, zero-touch first-run experience.
 
 **Unofficial community project. Not affiliated with or endorsed by OpenAI.**

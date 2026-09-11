@@ -97,9 +97,19 @@ ChatGPT's replies are expected to be substantive (see step 3). Docs: `docs/proto
    - `CONSENSUS_PLAN` / `CONSENSUS_REVIEW` / `waitingFor=GPT_CONSENSUS`: show the saved round and continue the same consensus loop. Do not restart at round 1.
    - `INIT` / `waitingFor=GPT_PLAN`: claim the tab and wait. Do not resend INIT.
    - `DONE`: summarize to the user if needed; `c2c session set --clear-checkpoint`.
-   - `BLOCKED`: surface ChatGPT's reason; do not INIT.
-   Never re-pair, never recreate the connector, and never rewrite Project
-   instructions just to resume.
+    - `BLOCKED`: surface ChatGPT's reason; do not INIT.
+    Never re-pair, never recreate the connector, and never rewrite Project
+    instructions just to resume.
+
+    **Fast failure for connector and usage errors.** After a control message,
+    do at most two short checks (about 20–30 seconds apart; 60 seconds total).
+    If the page or tool reports `Codex auth token is unavailable`, exhausted
+    Codex/Work usage, an upstream `HTTP 502`, or two consecutive
+    `workspace_info` failures, set the local checkpoint to `BLOCKED` and stop
+    waiting. Do not resend the same round, open a second chat, re-pair, or ask
+    for a token/API key. Show the current round, exact error, and one next step.
+    If access later recovers, resume from the saved `CONSENSUS_PLAN` or
+    `CONSENSUS_REVIEW` round; never restart at round 1.
 2. Send INIT with the user's goal (skip when the checkpoint says not to):
 
    If the request matched **纯文字多轮方案评审**, do not send the normal INIT

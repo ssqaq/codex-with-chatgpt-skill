@@ -2,7 +2,7 @@
 
 这是一个给 Codex 用的 Skill。它把 ChatGPT 当作“参谋”：ChatGPT 帮忙分析、规划和检查，Codex 负责真正修改项目、运行命令和测试。
 
-当前版本：`1.15.4`。唯一主仓库：<https://github.com/ssqaq/codex-with-chatgpt-skill>
+当前版本：`1.15.5`。唯一主仓库：<https://github.com/ssqaq/codex-with-chatgpt-skill>
 
 ## 一句话说明
 
@@ -40,6 +40,8 @@
 > 先做方案，多轮评审后再修改。让 ChatGPT 和 Codex 讨论到共识后，再自动改代码。
 
 它会显示“多轮评审：第 1 轮”“多轮评审：第 2 轮”等进度。双方同意后才改代码；没有达成共识前不会修改文件。
+
+如果浏览器授权失效、连接返回 502/530，或 Codex/Work 额度用完，Skill 会在约 1 分钟内暂停并说明原因，不会让你一直等，也不会重复发送同一轮。恢复后会从原来的轮次继续。
 
 ## 有截图时怎么用
 
