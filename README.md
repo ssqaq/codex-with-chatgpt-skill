@@ -4,6 +4,24 @@
 
 当前版本：`1.16.0`。唯一主仓库：<https://github.com/ssqaq/codex-with-chatgpt-skill>
 
+<p align="center">
+  <img src="docs/images/overview.png" alt="Codex with ChatGPT 功能总览：ChatGPT 负责想办法，Codex 负责真正动手" width="100%">
+</p>
+
+<p align="center"><strong>ChatGPT / DeepSeek 想办法，Codex 改文件、跑命令、做测试。</strong></p>
+
+## 一张图看懂协作方式
+
+<p align="center">
+  <img src="docs/images/collaboration-flow.png" alt="ChatGPT 和 Codex 从提出问题到结果复核的协作流程" width="100%">
+</p>
+
+## 安装、连接、配对、开始使用
+
+<p align="center">
+  <img src="docs/images/setup-flow.png" alt="Codex with ChatGPT 从安装 Skill 到输入配对码再开始使用的流程" width="100%">
+</p>
+
 ## 一句话说明
 
 **让 ChatGPT 出主意，让 Codex 动手干活。**
@@ -13,6 +31,33 @@
 1. ChatGPT 帮你分析问题、想方案。
 2. Codex 帮你改文件、运行测试。
 3. 改完以后再检查一遍，有问题继续修。
+
+## 功能总览
+
+| 功能 | 大白话说明 |
+|---|---|
+| 默认 DeepSeek 评审 | 默认打开 DeepSeek 网页，保持“深度思考”和“智能搜索”开启 |
+| GPT / ChatGPT 切换 | 你说“使用 GPT/ChatGPT 评审”时切换到原来的 ChatGPT 流程 |
+| 单次 / 多轮评审 | 单次直接给意见；多轮显示轮次、同意点、分歧点和下一步 |
+| Codex 执行修改 | 在真实项目目录里改文件、运行命令和测试 |
+| 共识修改门禁 | 双方明确达成共识前不修改文件，达成后才进入修改、测试和复核 |
+| 结果复核 | 修改后把测试和结果交回评审方继续检查 |
+| 图片辅助排查 | 读取明确提供的工作区截图，辅助分析界面问题 |
+| 安全传递摘要 | 只传摘要、事实、方案、分歧、文件方向和测试结果，不发送完整源码和完整日志 |
+| 快速暂停和恢复 | 连接失败、超时、授权失效或额度不足时暂停，不重复发送；恢复后接着原轮次继续 |
+| 会话隔离 | 每个 Codex 线程复用自己的评审会话和内置浏览器标签，避免串会话 |
+
+## 仓库里的连接和配对界面图
+
+下面三张图来自本仓库现有的连接流程文件，用来说明真实配置步骤；它们是流程示意图，不代表某个具体项目的运行结果。
+
+<table>
+  <tr>
+    <td width="33%" align="center" valign="top"><strong>安装流程</strong><br><img src="docs/images/install-flow.svg" alt="Skill 安装流程" width="100%"></td>
+    <td width="33%" align="center" valign="top"><strong>填写连接器</strong><br><img src="docs/images/connector-form.svg" alt="连接器填写示意图" width="100%"></td>
+    <td width="33%" align="center" valign="top"><strong>输入配对码</strong><br><img src="docs/images/pairing-flow.svg" alt="配对流程示意图" width="100%"></td>
+  </tr>
+</table>
 
 ## 怎么用
 
@@ -47,6 +92,8 @@
 
 默认使用 DeepSeek 网页评审，保持“深度思考”和“智能搜索”开启。官网现在显示快速、专家、识图模式已合并，Skill 直接按页面实际状态检查。
 
+每个 Codex 线程只绑定自己的 DeepSeek 评审会话和内置浏览器标签，后续轮次继续复用；旧的 ChatGPT 会话仍然兼容。连接失败、发送超时、授权失效或 Codex/Work 额度不足时，会快速暂停并显示原因，不会重复发送同一轮。
+
 ```text
 使用 DeepSeek 评审这个问题，然后按意见修改并测试。
 ```
@@ -77,8 +124,9 @@ Skill 会通过只读连接读取当前工作区或你明确发来的本地截�
 ## 完整流程
 
 你提要求
-→ ChatGPT 想办法
-→ Codex 改代码
+→ 选择 DeepSeek / ChatGPT
+→ 单次评审或多轮共识
+→ 共识后 Codex 改代码
 → 自动测试
 → 检查页面
 → 没问题后告诉你完成。
