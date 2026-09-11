@@ -228,3 +228,14 @@ Skill 不能把账号看不到的模型添加到 ChatGPT，也不能强制网页
 ## 必须记住
 
 DeepSeek 或 ChatGPT 只负责规划和复核；Codex 才负责改文件、运行命令和测试。任何检查未通过，都不能声称完成或同步。
+
+## DeepSeek 多轮评审提速与回执自救
+
+多轮评审慢通常不是 DeepSeek 回复慢，而是本地状态卡住或恢复流程做了重复工作。按下面规则处理：
+
+1. **恢复任务不重读文档**：已激活过的任务，恢复时只读取 `c2c review get` / `c2c review sync` 返回的状态，不再重新阅读 SKILL.md、references 和全部脚本目录。
+2. **状态显示 `reconcile-pending-receipt` 或 `sendPhase=confirmed` 且页面已有该轮消息**：说明消息已经真实发出，只是本地回执未确认。下一步必须立即用浏览器工具回读当前 DeepSeek 会话 DOM，确认该轮消息存在后调用专用 Skill 的 `RecordSendOutcome`；禁止重发同一轮，也禁止一直等待。
+3. **回执记录顺序**：发送后先确认页面消息已出现，再记录回执；如果 `RecordSendOutcome` 因“当前没有 bound 会话”被拒绝，先完成 `CompleteBootstrap` 绑定，再用原 fingerprint 重试一次 `RecordSendOutcome`，不需要重新确认或重新发送。
+4. **每轮脚本合并执行**：一次恢复只调用一次 `c2c review advance`；本地状态没有变化时不重复调用，直接进入浏览器读取回复。
+5. **等待回复节奏**：发送成功后最多做两次短检查（间隔 20–30 秒）；DeepSeek 的“深度思考”回复本身可能需要几分钟，检查期间回显“正在等待 DeepSeek 思考”，不是卡死。超过 60 秒仍无新状态，显示当前轮次和原因后暂停，不无限轮询。
+6. **连续两次无进展就停**：`noOpReportCount>=2` 或连续两次状态完全相同时，停止重复汇报，改为显示具体卡点（哪一轮、哪个字段、下一步动作），等待用户补充信息。
