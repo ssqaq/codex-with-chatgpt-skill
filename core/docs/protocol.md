@@ -475,3 +475,34 @@ brief, re-read code through the connector, and resume at NEXT_EXPECTED_STEP.
 Be substantive: why, which file, what to test. No empty one-liners and
 no 40-step epics. Use C2C control messages.
 ```
+
+## 多轮评审防卡死与进度协议（v1.17.0）
+
+### 一轮一条命令
+
+每轮发送准备只允许通过 `send_review_round.ps1` 完成。脚本内部固定顺序：
+读取消息文件（末尾已带暗号）→ 算指纹 → 算幂等键 → 绑定检查 → 四项总检查（暗号、指纹、标签、绑定）→ PrepareSend → ConfirmBrowserSend → 输出浏览器提交指令。任何一项失败立即返回 `ok=false` 和 `problems`，不进入半发送状态。PrepareSend 之后禁止修改消息内容。
+
+### 回执自动补记
+
+消息提交后每 20–30 秒检查页面。页面已有本轮消息而 `pendingReceipt=true` 时，立即调用 `RecordSendOutcome` 补记（confirmed）。页面无消息且超过 `sendDeadlineAt` 时走 `RetrySendAfterTimeout`（同幂等键，最多 2 次）。连续两次补记失败进入 auditRisk 自救路径。
+
+### 浏览器标签自动认路
+
+绑定检查前按 DeepSeek 会话 URL + 页面标题 + 消息暗号识别正确标签；编号变化时自动调用 `RecoverRuntimeTab` 更新绑定。三样都匹配不到时才提示用户打开原会话标签。
+
+### 每轮留底账
+
+每轮完成时向 `deepseek-review-state\audit\round-audit.jsonl` 追加一行 JSON：`at, taskId, codexThreadId, roundNumber, batch, resolvedCount, totalIssues, consensusReached, repeatedDisagreementRounds`。只追加不修改，不记录正文和敏感信息。状态文件损坏时从最后一行恢复轮次和进度。
+
+### 分歧进度条
+
+每轮回显 `多轮评审：第 N 轮（已解决 X/Y 项分歧）`；RecordRound 必须带 `ResolvedCount` 和 `TotalIssues`。共识达成时回显 `多轮评审：已达成共识（X/X 项全部分歧解决）`。
+
+### 恢复报位置
+
+恢复时回显 `多轮评审：从第 N 轮继续，上一轮卡在<sendPhase/pendingReceipt/nextAction>`。读不到状态时回显"状态缺失，从流水账恢复"。
+
+### 暂停对照选项
+
+连续两轮同一分歧无实质变化暂停时，输出对照表 `方案A（Codex）｜方案B（DeepSeek）｜差异点｜影响`，并给选项：A=用 Codex 方案，B=用 DeepSeek 方案，C=各说一次最终理由再定。用户选择后立即继续。
