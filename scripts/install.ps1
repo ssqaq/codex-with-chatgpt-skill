@@ -33,10 +33,11 @@ if (-not (Has-Command "winget")) { throw "找不到 winget，请先安装 App In
 if (-not (Has-Command "git")) { Install-Winget "Git.Git" "Git"; Refresh-ProcessPath }
 if (-not (Has-Command "node")) { Install-Winget "OpenJS.NodeJS.LTS" "Node.js"; Refresh-ProcessPath }
 if (-not (Has-Command "cloudflared")) { Install-Winget "Cloudflare.cloudflared" "cloudflared"; Refresh-ProcessPath }
+if (-not (Has-Command "pwsh")) { Install-Winget "Microsoft.PowerShell" "PowerShell 7"; Refresh-ProcessPath }
 
 Refresh-ProcessPath
 
-if (-not (Has-Command "git") -or -not (Has-Command "node") -or -not (Has-Command "cloudflared")) {
+if (-not (Has-Command "git") -or -not (Has-Command "node") -or -not (Has-Command "cloudflared") -or -not (Has-Command "pwsh")) {
   throw "安装完成但当前窗口还没有刷新 PATH，请关闭后重新打开 PowerShell 再运行此脚本。"
 }
 
@@ -46,10 +47,12 @@ if ($nodeMajor -lt 20) { throw "Node.js 版本低于 20，请升级后重试。"
 if (Test-Path (Join-Path $Checkout ".git")) {
   Write-Host "更新已有项目：$Checkout"
   git -C $Checkout pull --ff-only
+  if ($LASTEXITCODE -ne 0) { throw "项目更新失败，未安装。" }
 } else {
   Write-Host "下载项目：$Checkout"
   New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Checkout) | Out-Null
   git clone $repoUrl $Checkout
+  if ($LASTEXITCODE -ne 0) { throw "项目下载失败，未安装。" }
 }
 
 $projectRoot = if (Test-Path (Join-Path $Checkout "core\package.json")) {
@@ -63,12 +66,16 @@ if (-not $SkipBuild) {
   try {
     corepack enable
     corepack pnpm install
+    if ($LASTEXITCODE -ne 0) { throw "依赖安装失败。" }
     corepack pnpm build
+    if ($LASTEXITCODE -ne 0) { throw "构建失败，未安装。" }
   } finally {
     Pop-Location
   }
 }
 
+node (Join-Path $Checkout 'scripts\install-review-skills.mjs') --skills-root (Split-Path -Parent $SkillDirectory)
+if ($LASTEXITCODE -ne 0) { throw "DeepSeek 配套安装失败，未显示安装完成。" }
 New-Item -ItemType Directory -Force -Path $SkillDirectory | Out-Null
 $sourceSkill = Join-Path $Checkout "SKILL.md"
 if (-not (Test-Path $sourceSkill)) {

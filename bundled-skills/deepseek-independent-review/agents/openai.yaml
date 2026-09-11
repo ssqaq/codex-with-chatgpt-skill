@@ -1,0 +1,7 @@
+interface:
+  display_name: "DeepSeek独立一次评审"
+  short_description: "在 Codex 右侧栏用 DeepSeek 专家模式独立找错"
+  default_prompt: "使用 $deepseek-independent-review。只在 Codex 右侧栏打开 https://chat.deepseek.com/，使用专家模式和深度思考；复用当前 thread 的唯一官网会话，核实后立即发送并做一次独立技术评审；收到回复后记录 Rn 并显示状态面板。我的具体问题："
+
+policy:
+  allow_implicit_invocation: true

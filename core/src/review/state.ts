@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { ensureDir, getStateDir, writeSecureJson } from "../config/paths.js";
 import { REVIEW_PROVIDERS, providerLabel, type ReviewMode, type ReviewProvider } from "./provider.js";
+import { WaitSchema, waitProgress } from "./wait.js";
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/).refine(s => s !== "." && s !== "..");
 const summary = z.string().max(2400);
@@ -20,6 +21,8 @@ export const ReviewSessionSchema = z.object({
   evidenceRevision: z.number().int().nonnegative().optional(),
   evidenceFingerprint: z.string().max(256).optional(),
   evidenceRound: z.number().int().positive().safe().optional(),
+  wait: WaitSchema.optional(),
+  recoveryRequired: z.boolean().optional(),
   createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
   executionStartedAt: z.string().datetime().optional(),
   verification: z.object({ selfCheck: z.literal("PASS"), pageVerify: z.enum(["PASS", "NOT_APPLICABLE"]), at: z.string().datetime() }).optional(),
@@ -56,6 +59,10 @@ export function changeReview(workspaceId: string, threadId: string, transform: (
       writeSecureJson(path.join(path.dirname(file), "history", threadId, `${id.parse(previous.taskId)}.json`), previous);
     }
     writeSecureJson(file, next);
+    // A validated local checkpoint; it is never a browser receipt or send permit.
+    writeSecureJson(`${file}.checkpoint`, next);
+    fs.appendFileSync(`${file}.audit.jsonl`, JSON.stringify({ at: next.updatedAt, taskId: next.taskId,
+      threadId, round: next.round, phase: next.phase }) + "\n", { mode: 0o600 });
     return next;
   } finally { fs.closeSync(fd); fs.rmSync(lock, { force: true }); }
 }
@@ -72,7 +79,7 @@ export function newReview(input: { workspaceId: string; threadId: string; taskId
 }
 
 export function canExecuteReview(s: ReviewSession): boolean {
-  return s.phase === "READY" && s.replyReceived && s.receiptStatus === "confirmed" &&
+  return !s.recoveryRequired && s.phase === "READY" && s.replyReceived && s.receiptStatus === "confirmed" &&
     s.codexConsensus && s.reviewerConsensus && !s.disagreements && !s.blockedReason;
 }
 
@@ -83,6 +90,7 @@ export function renderReview(s: ReviewSession): string {
     `评审渠道：${providerLabel(s.reviewProvider)}`,
     s.reviewMode === "single" ? "评审方式：单次评审" : `多轮评审：第 ${s.round} 轮`,
     `当前状态：${status}`,
+    ...(s.wait && (s.phase === "WAITING" || s.phase === "BLOCKED") ? [waitProgress(s).message] : []),
     `实际模型：${s.modelName ?? "尚未从页面确认"} / ${s.reasoningStrength ?? "尚未确认"}`,
     `同意的地方：${s.agreements || "尚未收到"}`,
     `分歧的地方：${s.disagreements || (s.replyReceived ? "无" : "尚未确认")}`,
@@ -91,4 +99,31 @@ export function renderReview(s: ReviewSession): string {
     `执行门槛：${canExecuteReview(s) ? "允许修改" : s.phase === "EXECUTING" ? "修改中，尚未验收" : s.phase === "DONE" ? "已验收" : "不允许开始修改"}`,
     `下一步：${s.nextAction}`,
   ].join("\n");
+}
+
+export function recoverReview(workspaceId: string, threadId: string, taskId: string): ReviewSession {
+  const file = reviewFile(workspaceId, threadId);
+  const lock = `${file}.lock`;
+  const fd = fs.openSync(lock, "wx", 0o600);
+  try {
+    try {
+      const current = readReview(workspaceId, threadId);
+      if (current) {
+        if (current.taskId !== taskId) throw new Error("task-mismatch");
+        return current;
+      }
+    } catch (error) {
+      if ((error as Error).message === "task-mismatch" || (error as Error).message === "review ownership mismatch") throw error;
+    }
+    let saved: ReviewSession;
+    try { saved = ReviewSessionSchema.parse(JSON.parse(fs.readFileSync(`${file}.checkpoint`, "utf8"))); }
+    catch { throw new Error("没有可验证的恢复记录，保留原文件；不能新建任务或重发。"); }
+    if (saved.workspaceId !== workspaceId || saved.threadId !== threadId || saved.taskId !== taskId) throw new Error("恢复记录不属于当前任务。");
+    if (fs.existsSync(file)) fs.copyFileSync(file, `${file}.${Date.now()}.damaged`, fs.constants.COPYFILE_EXCL);
+    const next: ReviewSession = isReviewTerminal(saved) ? saved : { ...saved, recoveryRequired: true, phase: "BLOCKED",
+      reviewerConsensus: false, codexConsensus: false, blockedReason: "已恢复本地记录，尚未重新核对原网页和回执",
+      nextAction: `从第 ${saved.round} 轮继续，上一轮停在 ${saved.phase}；先观察原网页，再同步真实回执`, updatedAt: new Date().toISOString() };
+    writeSecureJson(file, next);
+    return next;
+  } finally { fs.closeSync(fd); fs.rmSync(lock, { force: true }); }
 }

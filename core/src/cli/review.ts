@@ -6,10 +6,11 @@ import { Workspace } from "../workspace/manager.js";
 import { mergeSession, readSession, sessionFile, writeSession } from "../session/state.js";
 import { deepseekDependency, readDeepseek, runDeepseek } from "../review/deepseek.js";
 import { parseReviewMode, selectReviewer } from "../review/provider.js";
-import { canExecuteReview, changeReview, isReviewTerminal, newReview, readReview, renderReview, type ReviewSession } from "../review/state.js";
+import { canExecuteReview, changeReview, isReviewTerminal, newReview, readReview, recoverReview, renderReview, type ReviewSession } from "../review/state.js";
 import { buildReviewMessage } from "../review/message.js";
+import { observeReview, trackWait, waitProgress } from "../review/wait.js";
 
-type Options = { workspace?: string; thread?: string; json?: boolean; provider?: string; request?: string; mode?: string; task?: string; summary?: string; selfCheck?: string; pageVerify?: string };
+type Options = { workspace?: string; thread?: string; json?: boolean; provider?: string; request?: string; mode?: string; task?: string; summary?: string; selfCheck?: string; pageVerify?: string; evidence?: string };
 function context(opts: Options): { workspaceId: string; threadId: string } {
   const ws = new Workspace(opts.workspace ?? process.cwd());
   const threadId = (opts.thread ?? process.env.CODEX_THREAD_ID ?? "").replace(/^codex:\/\/threads\//, "").trim();
@@ -32,6 +33,15 @@ function save(s: ReviewSession, next: ReviewSession): ReviewSession {
   });
 }
 function refresh(s: ReviewSession): ReviewSession {
+  const next = trackWait(s, refreshSource(s));
+  if (next.phase === "WAITING") {
+    const progress = waitProgress(next);
+    if (progress.pauseReason) return { ...next, phase: "BLOCKED", blockedReason: progress.pauseReason,
+      nextAction: "重新观察原评审网页，核对本轮消息和回复；不重复发送" };
+  }
+  return next;
+}
+function refreshSource(s: ReviewSession): ReviewSession {
   if (isReviewTerminal(s)) return s;
   if (s.reviewProvider === "deepseek") return readDeepseek(s);
   const legacy = readSession(s.workspaceId)?.checkpoint;
@@ -113,12 +123,34 @@ export function registerReviewCommands(program: Command): void {
     output(s, opts);
   });
   action(command("get", "读取当前任务已保存的评审进度"), opts => output(current(opts), opts));
+  action(command("recover", "从本任务检查点恢复，重新核验前禁止执行")
+    .requiredOption("--task <id>", "需要恢复的原评审任务号"), opts => {
+    const c = context(opts);
+    output(recoverReview(c.workspaceId, c.threadId, opts.task!), opts);
+  });
+  action(command("observe", "记录内置浏览器刚读取的页面状态，不代替回复核对")
+    .requiredOption("--evidence <path>", "内置浏览器观察摘要 JSON"), opts => {
+    const s = current(opts);
+    const input = fs.readFileSync(opts.evidence!, "utf8");
+    if (Buffer.byteLength(input) > 8192) throw new Error("网页观察摘要过大。");
+    const next = observeReview(s, JSON.parse(input.replace(/^\uFEFF/, "")));
+    output(save(s, { ...next, recoveryRequired: next.wait?.pageStatus === "thinking" || next.wait?.pageStatus === "reply-ready" ? false : s.recoveryRequired }), opts);
+  });
+  action(command("heartbeat", "按保存的等待起点计时，每满一分钟生成一次回显；不访问网页"), opts => {
+    const s = current(opts), checked = refresh(s), progress = waitProgress(checked);
+    const active = checked.phase === "WAITING" || (checked.phase === "BLOCKED" && s.phase === "WAITING");
+    const shouldReport = active && (progress.shouldReport || checked.phase !== s.phase);
+    const next = save(s, { ...checked, wait: shouldReport && checked.wait ? { ...checked.wait, lastReportedMinute: progress.minute } : checked.wait });
+    const message = shouldReport ? progress.message + (checked.blockedReason ? `\n已暂停：${checked.blockedReason}` : "") : "";
+    console.log(opts.json ? JSON.stringify({ ok: true, shouldReport, message, phase: next.phase, round: next.round, canExecute: canExecuteReview(next) }) : message);
+  });
   action(command("prepare", "准备下一轮方案摘要，不执行网页发送")
     .requiredOption("--summary <text>", "修订后的短方案摘要"), opts => {
     const s = current(opts), checked = refresh(s);
     if (checked.reviewMode !== "consensus" || checked.phase !== "REVIEWED" || !checked.replyReceived) throw new Error("必须先收到本轮完整评审并核对分歧，才能准备下一轮。");
     const next: ReviewSession = { ...checked, summary: opts.summary!.trim(), round: checked.round + 1,
       phase: "PREPARING", reviewerConsensus: false, codexConsensus: false, replyReceived: false,
+      wait: undefined,
       receiptStatus: "none", blockedReason: "", nextAction: "按专用 Skill 准备下一轮消息，再用内置浏览器发送" };
     buildReviewMessage(next);
     output(save(s, next), opts);
@@ -138,6 +170,9 @@ export function registerReviewCommands(program: Command): void {
     if (s.reviewProvider === "chatgpt") { output(save(s, refresh(s)), opts); return; }
     try {
       let synced = refresh(s);
+      if (synced.phase === "WAITING" || synced.wait && synced.phase === "BLOCKED") {
+        output(save(s, synced), opts); return;
+      }
       if (synced.nextAction === "activate-deepseek-skill") {
         await runDeepseek(s, "activate");
       }

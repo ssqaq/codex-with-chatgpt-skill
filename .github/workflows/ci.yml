@@ -11,7 +11,10 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: core
@@ -37,9 +40,11 @@ jobs:
       - name: 构建
         run: pnpm build
       - name: 检查两份 Skill 一致
+        shell: bash
         working-directory: .
         run: cmp --silent SKILL.md core/skill/SKILL.md
       - name: 检查公开文档一致和边界说明
+        shell: bash
         working-directory: .
         run: |
           ! grep -n "XiaoDuoYa/codex-with-chatgpt" README.md core/README.md core/README.zh-CN.md SKILL.md core/skill/SKILL.md references/*.md
@@ -48,7 +53,9 @@ jobs:
           grep -q "可能计入" README.md core/README.zh-CN.md SKILL.md references/security-and-images.md
           grep -q "当前可见" SKILL.md references/security-and-images.md
       - name: 检查安装脚本
+        shell: bash
         working-directory: .
         run: |
           bash -n scripts/install.sh scripts/update.sh scripts/uninstall.sh scripts/check-version.sh scripts/backup.sh scripts/rollback.sh
           pwsh -NoProfile -Command '$errors=@(); foreach ($p in Get-ChildItem scripts -Filter "*.ps1") { $t=$null; $e=$null; [System.Management.Automation.Language.Parser]::ParseFile($p.FullName,[ref]$t,[ref]$e) | Out-Null; if ($e.Count) { $errors += $p.Name } }; if ($errors.Count) { throw ($errors -join ", ") }'
+          pwsh -NoProfile -Command '$errors=@(); foreach ($p in Get-ChildItem bundled-skills -Recurse -Filter "*.ps1") { $t=$null; $e=$null; [System.Management.Automation.Language.Parser]::ParseFile($p.FullName,[ref]$t,[ref]$e) | Out-Null; if ($e.Count) { $errors += $p.Name } }; if ($errors.Count) { throw ($errors -join ", ") }'

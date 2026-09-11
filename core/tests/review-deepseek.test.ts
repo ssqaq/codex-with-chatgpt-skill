@@ -87,6 +87,20 @@ describe("DeepSeek native-skill evidence projection", () => {
     denied(result);
   });
 
+  it("counts from the verified browser send even when the first sync happens later", () => {
+    const { session, source, binding } = fixture();
+    source.deepseekCompletedRounds = "0";
+    source.deepseekStatus = "已发送，等待回复";
+    const sentAt = new Date(Date.now() - 240000).toISOString();
+    source.browserActionAt = binding.browserActionAt = sentAt;
+    const first = syncDeepseek(session, source, [binding]);
+    expect(first.wait?.startedAt).toBe(sentAt);
+    source.browserActionAt = binding.browserActionAt = new Date().toISOString();
+    expect(syncDeepseek(first, source, [binding]).wait?.startedAt).toBe(sentAt);
+    source.browserActionAt = "invalid";
+    expect(syncDeepseek(session, source, [binding]).wait?.startedAt).not.toBe("invalid");
+  });
+
   it.each(["未完成", "尚未收到完整回复", "未收到", "已回复", "uncompleted", "received"]) (
     "does not promote incomplete or ambiguous reply status %s", status => {
       const { session, source, binding } = fixture();
@@ -289,11 +303,7 @@ describe("DeepSeek installed-script dispatch and state reads", () => {
     execScript.mockReset().mockResolvedValue({ stdout: '{"status":"simulated-local-action"}' });
     for (const mode of ["single", "consensus"] as const) {
       const dep = deepseekDependency(mode);
-      for (const relative of dep.missing) {
-        const file = path.join(dep.skillPath, relative);
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, "# Simulated dependency path; never executes a browser.");
-      }
+      fs.cpSync(new URL(`../../bundled-skills/${dep.skillName}/`, import.meta.url), dep.skillPath, { recursive: true });
     }
   });
   afterEach(() => {

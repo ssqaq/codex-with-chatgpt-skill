@@ -1,7 +1,9 @@
 name: 自动发布新版本
 
 on:
-  push:
+  workflow_run:
+    workflows: [自动测试]
+    types: [completed]
     branches: [master, main]
 
 permissions:
@@ -9,26 +11,34 @@ permissions:
 
 jobs:
   release:
-    if: github.actor != 'github-actions[bot]'
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: 拉取代码
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
       - name: 读取版本并发布
         env:
           GH_TOKEN: ${{ github.token }}
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          TESTED_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
+          test "$(git rev-parse HEAD)" = "$TESTED_SHA"
+          test "$(git ls-remote origin "refs/heads/$TESTED_BRANCH" | cut -f1)" = "$TESTED_SHA"
           version="$(tr -d '[:space:]' < VERSION)"
           test -n "$version"
           tag="v$version"
+          notes="docs/releases/$version.md"
+          test -f "$notes"
           if git rev-parse "$tag" >/dev/null 2>&1; then
-            echo "版本 $tag 已存在，跳过发布。"
-            exit 0
+            test "$(git rev-list -n 1 "$tag")" = "$TESTED_SHA"
+          else
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git tag -a "$tag" -m "$tag"
+            git push origin "$tag"
           fi
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git tag -a "$tag" -m "$tag"
-          git push origin "$tag"
-          gh release create "$tag" --title "$tag" --generate-notes
+          if gh release view "$tag" >/dev/null 2>&1; then exit 0; fi
+          gh release create "$tag" --title "$tag" --notes-file "$notes"

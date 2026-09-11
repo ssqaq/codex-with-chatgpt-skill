@@ -1,0 +1,7 @@
+interface:
+  display_name: "DeepSeek多轮共识评审"
+  short_description: "在 Codex 右侧栏用 DeepSeek 专家模式做多轮核对"
+  default_prompt: "使用 $deepseek-consensus-review。只在 Codex 右侧栏打开 https://chat.deepseek.com/，使用专家模式和深度思考；复用当前 thread 的唯一官网会话，核实后立即发送。每轮记录 Cn 并显示状态面板；连续两轮相同分歧且无新证据时等待用户裁决，双方消除分歧后再修改。我的具体问题："
+
+policy:
+  allow_implicit_invocation: true

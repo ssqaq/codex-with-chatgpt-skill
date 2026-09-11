@@ -5,22 +5,33 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ReviewMode } from "./provider.js";
 import { ReviewSessionSchema, type ReviewSession } from "./state.js";
+import { trackWait } from "./wait.js";
+import { createHash } from "node:crypto";
 
 const execFileAsync = promisify(execFile);
 export const deepseekSkillName = (mode: ReviewMode): string => mode === "single" ? "deepseek-independent-review" : "deepseek-consensus-review";
 export function deepseekStateDir(): string {
   return path.resolve(process.env.C2C_DEEPSEEK_STATE_DIR ?? path.join(os.homedir(), ".codex", "deepseek-review-state"));
 }
-export function deepseekDependency(mode: ReviewMode): { available: boolean; skillName: string; skillPath: string; missing: string[] } {
+export function deepseekDependency(mode: ReviewMode): { available: boolean; skillName: string; skillPath: string; missing: string[]; changed: string[]; requiredVersion: string; installedVersion: string | null } {
   const skillName = deepseekSkillName(mode);
   const roots = process.env.C2C_REVIEW_SKILLS_ROOT ? [process.env.C2C_REVIEW_SKILLS_ROOT] : [
     path.join(process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), "skills"), path.join(os.homedir(), ".agents", "skills"),
   ];
   const root = roots.find(r => fs.existsSync(path.join(r, skillName, "SKILL.md"))) ?? roots[0];
   const skillPath = path.resolve(root, skillName);
-  const missing = ["SKILL.md", "references/browser-protocol.md", "scripts/activate_review.ps1", "scripts/advance_review_workflow.ps1", "scripts/session_binding.ps1", "scripts/update_review_status.ps1", "scripts/show_review_dashboard.ps1"]
-    .filter(f => !fs.existsSync(path.join(skillPath, f)));
-  return { available: !missing.length, skillName, skillPath, missing };
+  const manifest = JSON.parse(fs.readFileSync(new URL("../../../bundled-skills/manifest.json", import.meta.url), "utf8")) as { version: string; skills: Record<string, Record<string, string>> };
+  const missing: string[] = [], changed: string[] = [];
+  for (const [relative, expected] of Object.entries(manifest.skills[skillName])) {
+    const file = path.join(skillPath, relative);
+    if (!fs.existsSync(file)) { missing.push(relative); continue; }
+    const actual = createHash("sha256").update(fs.readFileSync(file, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n")).digest("hex");
+    if (actual !== expected) changed.push(relative);
+  }
+  const versionFile = path.join(skillPath, "VERSION");
+  const installedVersion = fs.existsSync(versionFile) ? fs.readFileSync(versionFile, "utf8").trim() : null;
+  return { available: !missing.length && !changed.length && installedVersion === manifest.version,
+    skillName, skillPath, missing, changed, requiredVersion: manifest.version, installedVersion };
 }
 
 /** No browser or HTTP implementation here: reuse the installed skill's state/lease/recovery engine. */
@@ -28,7 +39,7 @@ export async function runDeepseek(s: ReviewSession, action: "activate" | "advanc
   ReviewSessionSchema.parse(s);
   if (s.reviewProvider !== "deepseek") throw new Error("当前任务不是 DeepSeek 评审，未执行专用脚本。");
   const dep = deepseekDependency(s.reviewMode);
-  if (!dep.available) throw new Error(`缺少 ${dep.skillName}：${dep.missing.join(", ")}；未发送，未切换其他渠道。`);
+  if (!dep.available) throw new Error(`${dep.skillName} 缺少配套文件、文件已改变或版本不同（本机 ${dep.installedVersion ?? "未知"} / 需要 ${dep.requiredVersion}）；请运行仓库 scripts/install-review-skills.mjs 修复；未发送。`);
   // The installed activator unconditionally passes C1/R1, including on resume.
   // Existing tasks must use its advance engine instead or later rounds regress.
   const previous = readObject(path.join(deepseekStateDir(), `${s.taskId}.json`));
@@ -108,6 +119,7 @@ export function syncDeepseek(s: ReviewSession, source: Raw | null, bindings: Raw
   if (!source) return s.evidenceRevision !== undefined || s.round > 1 ? block("DeepSeek 原任务状态缺失，不能重新开始") :
     { ...base, phase: "PREPARING", blockedReason: "", nextAction: "activate-deepseek-skill" };
   if (source.taskId !== s.taskId || source.codexThreadId !== s.threadId || source.skillName !== deepseekSkillName(s.reviewMode)) return block("DeepSeek 任务归属或评审方式不一致");
+  if (risk(source.reviewRecoveryRequired)) return block("已恢复 DeepSeek 轮次记录，需要重新核对原网页", "revalidate-recovered-page");
   if (bindings.some(b => !object(b))) return block("DeepSeek 绑定记录损坏");
   const candidates = bindings.filter(b => b.codexThreadId === s.threadId);
   if (candidates.length > 1) return block("同一任务存在多个绑定，禁止猜测会话");
@@ -168,10 +180,10 @@ export function syncDeepseek(s: ReviewSession, source: Raw | null, bindings: Raw
   }
   const reviewerConsensus = received && (s.reviewMode === "single" || (roundConsensus && source.consensusStatus === "已达成"));
   const codexConsensus = reviewerConsensus && source.codexSummaryStatus === "已完成" && source.checkResult === "无问题" && source.planStatus === "已敲定" && source.executionStatus === "允许开始执行" && !base.disagreements;
-  return { ...base, receiptStatus: "confirmed", replyReceived: received, reviewerConsensus, codexConsensus,
+  return trackWait(s, { ...base, receiptStatus: "confirmed", replyReceived: received, reviewerConsensus, codexConsensus,
     phase: codexConsensus ? (s.phase === "EXECUTING" ? "EXECUTING" : "READY") : received ? "REVIEWED" : "WAITING",
     blockedReason: "", nextAction: codexConsensus ? "Codex 开始修改、测试和复核" : text(source.nextAction).slice(0, 500) || "读取当前网页完整回复，不重复发送",
-  };
+  }, new Date(), source.browserActionAt === b.browserActionAt ? text(source.browserActionAt) : undefined);
 }
 
 export function readDeepseek(s: ReviewSession): ReviewSession {

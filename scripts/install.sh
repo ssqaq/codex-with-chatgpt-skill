@@ -11,12 +11,13 @@ install_macos_dependencies() {
   command -v node >/dev/null 2>&1 || brew install node
   command -v cloudflared >/dev/null 2>&1 || brew install cloudflared
   command -v python3 >/dev/null 2>&1 || brew install python
+  command -v pwsh >/dev/null 2>&1 || brew install --cask powershell
 }
 
 if [[ "${OSTYPE:-}" == darwin* ]]; then
   install_macos_dependencies
 else
-  for command_name in git node cloudflared python3; do
+  for command_name in git node cloudflared python3 pwsh; do
     command -v "$command_name" >/dev/null 2>&1 || {
       echo "当前脚本面向 macOS；缺少 $command_name。请先安装后重试。" >&2
       exit 1
@@ -50,6 +51,7 @@ corepack enable
 corepack pnpm install
 corepack pnpm build
 
+node "$CHECKOUT/scripts/install-review-skills.mjs" --skills-root "$(dirname "$SKILL_DIRECTORY")"
 mkdir -p "$SKILL_DIRECTORY"
 source_skill="$CHECKOUT/SKILL.md"
 if [[ ! -f "$source_skill" ]]; then
