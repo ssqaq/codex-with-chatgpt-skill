@@ -1,6 +1,6 @@
 # Setup, connection, and recovery rules
 
-Read this reference before first-time setup, reconnecting a broken connection, updating the Skill, syncing an old task, or changing ChatGPT conversation mode. Keep ChatGPT work in the built-in in-app browser unless the user explicitly authorizes the documented Cloudflare login exception.
+Read this reference before first-time setup, reconnecting a broken connection, updating the Skill, syncing an old task, or changing reviewer mode. New review tasks default to DeepSeek; ChatGPT setup rules below apply only when the task explicitly selects ChatGPT. Keep ChatGPT work in the built-in in-app browser unless the user explicitly authorizes the documented Cloudflare login exception.
 
 **Golden rules**
 

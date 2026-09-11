@@ -7,6 +7,7 @@ import {
   readUiPrefs,
   SETUP_CHOICE_PROMPT,
 } from "../src/config/ui-prefs.js";
+import { selectReviewer } from "../src/review/provider.js";
 import { cleanup, isolateStateDir } from "./helpers.js";
 
 describe("ui prefs", () => {
@@ -21,6 +22,7 @@ describe("ui prefs", () => {
   it("starts empty and is not bound to a workspace", () => {
     dirs.push(isolateStateDir());
     const prefs = readUiPrefs();
+    expect(prefs.reviewProvider).toBe("deepseek");
     expect(prefs.developerModeEnabled).toBe(false);
     expect(prefs.setupMode).toBeNull();
     expect(prefs.remembered).toEqual({ developerMode: false, setupMode: false });
@@ -67,5 +69,52 @@ describe("ui prefs", () => {
     expect(readUiPrefs().developerModeEnabled).toBe(false);
     expect(readUiPrefs().remembered.developerMode).toBe(false);
     expect(readUiPrefs().setupMode).toBe("auto");
+  });
+
+  it("persists the default reviewer independently of ChatGPT setup preferences", () => {
+    dirs.push(isolateStateDir());
+    mergeUiPrefs({ setupMode: "manual", developerModeEnabled: true });
+    const changed = mergeUiPrefs({ reviewProvider: "chatgpt" });
+    expect(changed.reviewProvider).toBe("chatgpt");
+    expect(changed.setupMode).toBe("manual");
+    expect(changed.developerModeEnabled).toBe(true);
+    expect(readUiPrefs().reviewProvider).toBe("chatgpt");
+    mergeUiPrefs({ setupMode: "auto" });
+    expect(readUiPrefs().reviewProvider).toBe("chatgpt");
+    expect(mergeUiPrefs({ reviewProvider: "deepseek" }).reviewProvider).toBe("deepseek");
+  });
+
+  it("uses DeepSeek for legacy preference files without losing their setup choices", () => {
+    dirs.push(isolateStateDir());
+    fs.writeFileSync(prefsFile(), JSON.stringify({
+      developerModeEnabled: true, setupMode: "manual", updatedAt: "2026-01-01T00:00:00.000Z",
+    }));
+    const before = fs.readFileSync(prefsFile(), "utf8");
+    const prefs = readUiPrefs();
+    expect(prefs.reviewProvider).toBe("deepseek");
+    expect(prefs.developerModeEnabled).toBe(true);
+    expect(prefs.setupMode).toBe("manual");
+    expect(fs.readFileSync(prefsFile(), "utf8")).toBe(before);
+  });
+
+  it("does not persist an explicit per-task GPT override as a new default", () => {
+    dirs.push(isolateStateDir());
+    mergeUiPrefs({ reviewProvider: "deepseek", setupMode: "manual" });
+    const before = fs.readFileSync(prefsFile(), "utf8");
+    expect(selectReviewer({ request: "用 GPT 评审这个问题", defaultProvider: readUiPrefs().reviewProvider }))
+      .toBe("chatgpt");
+    expect(readUiPrefs().reviewProvider).toBe("deepseek");
+    expect(fs.readFileSync(prefsFile(), "utf8")).toBe(before);
+    expect(selectReviewer({ request: "继续处理另一个任务", defaultProvider: readUiPrefs().reviewProvider }))
+      .toBe("deepseek");
+  });
+
+  it("rejects an invalid reviewer patch without changing saved preferences", () => {
+    dirs.push(isolateStateDir());
+    mergeUiPrefs({ reviewProvider: "chatgpt", setupMode: "manual" });
+    const before = fs.readFileSync(prefsFile(), "utf8");
+    expect(() => mergeUiPrefs({ reviewProvider: "unknown" as "deepseek" })).toThrow(/review-provider/);
+    expect(fs.readFileSync(prefsFile(), "utf8")).toBe(before);
+    expect(readUiPrefs().reviewProvider).toBe("chatgpt");
   });
 });

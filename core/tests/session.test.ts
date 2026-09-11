@@ -11,6 +11,7 @@ import {
   resolveConversation,
   sessionFile,
   writeSession,
+  type SavedSession,
 } from "../src/session/state.js";
 import { cleanup, makeTmpDir } from "./helpers.js";
 
@@ -308,6 +309,107 @@ describe("mergeSession", () => {
         projectUrl: "https://chatgpt.com/c/nope",
       })
     ).toThrow(/project URL/);
+  });
+});
+
+describe("review provider checkpoint compatibility", () => {
+  function legacySession(confirmed = false): SavedSession {
+    return {
+      url: "https://chatgpt.com/c/legacy-review",
+      connectorName: "Codex with ChatGPT · Existing",
+      taskId: "legacy-review",
+      savedAt: "2026-01-01T00:00:00.000Z",
+      checkpoint: {
+        taskId: "legacy-review", iteration: 2, protocolState: "CONSENSUS_REVIEW",
+        waitingFor: "GPT_CONSENSUS", consensusMode: true, consensusRound: 2,
+        consensusPlan: "保留旧入口，增加回归测试。",
+        codexConsensus: confirmed, chatgptConsensus: confirmed,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    };
+  }
+
+  it("keeps a legacy checkpoint on ChatGPT without rewriting its original data", () => {
+    const legacy = legacySession();
+    const before = JSON.stringify(legacy);
+    const resumed = mergeSession(legacy, { checkpoint: { nextExpectedStep: "继续第 2 轮" } });
+    expect(resumed.checkpoint?.reviewProvider).toBe("chatgpt");
+    expect(resumed.checkpoint?.reviewMode).toBe("consensus");
+    expect(resumed.checkpoint?.reviewerConsensus).toBe(false);
+    expect(resumed.checkpoint?.consensusRound).toBe(2);
+    expect(resumed.checkpoint?.waitingFor).toBe("GPT_CONSENSUS");
+    expect(resumed.url).toBe(legacy.url);
+    expect(resumed.connectorName).toBe(legacy.connectorName);
+    expect(JSON.stringify(legacy)).toBe(before);
+  });
+
+  it("accepts legacy ChatGPT confirmation after resuming an unconfirmed checkpoint", () => {
+    const resumed = mergeSession(legacySession(), { checkpoint: { nextExpectedStep: "等待 ChatGPT 评审" } });
+    const confirmed = mergeSession(resumed, {
+      checkpoint: { protocolState: "CONSENSUS", codexConsensus: true, chatgptConsensus: true, waitingFor: "none" },
+    });
+    expect(confirmed.checkpoint?.reviewerConsensus).toBe(true);
+    const executing = mergeSession(confirmed, { checkpoint: { protocolState: "EXECUTING" } });
+    expect(executing.checkpoint?.protocolState).toBe("EXECUTING");
+  });
+
+  it("honors a legacy ChatGPT confirmation being withdrawn", () => {
+    const confirmed = mergeSession(legacySession(true), { checkpoint: { protocolState: "CONSENSUS" } });
+    const withdrawn = mergeSession(confirmed, {
+      checkpoint: { protocolState: "CONSENSUS_REVIEW", chatgptConsensus: false },
+    });
+    expect(withdrawn.checkpoint?.reviewerConsensus).toBe(false);
+    expect(() => mergeSession(withdrawn, { checkpoint: { protocolState: "EXECUTING" } }))
+      .toThrow(/consensus confirmations/);
+  });
+
+  it("does not accept a ChatGPT flag as DeepSeek approval", () => {
+    expect(() => mergeSession(null, {
+      taskId: "deepseek-review",
+      checkpoint: {
+        protocolState: "EXECUTING", reviewProvider: "deepseek", reviewMode: "consensus",
+        consensusRound: 1, codexConsensus: true, chatgptConsensus: true,
+      },
+    })).toThrow(/consensus confirmations/);
+  });
+
+  it("accepts generic DeepSeek approval and preserves review references and round on resume", () => {
+    const saved = mergeSession(null, {
+      taskId: "deepseek-review",
+      checkpoint: {
+        protocolState: "CONSENSUS", waitingFor: "REVIEWER_CONSENSUS",
+        reviewProvider: "deepseek", reviewMode: "consensus", consensusRound: 3,
+        reviewerConsensus: true, codexConsensus: true,
+        reviewSessionRef: "reviews/workspace-1/thread-1.json", codexThreadId: "thread-1",
+        chatUrl: "https://chat.deepseek.com/a/chat/saved-review",
+      },
+    });
+    const resumed = mergeSession(saved, { checkpoint: { protocolState: "EXECUTING", waitingFor: "none" } });
+    expect(resumed.checkpoint).toMatchObject({
+      protocolState: "EXECUTING", reviewProvider: "deepseek", reviewMode: "consensus",
+      consensusRound: 3, reviewerConsensus: true, codexConsensus: true,
+      reviewSessionRef: "reviews/workspace-1/thread-1.json", codexThreadId: "thread-1",
+      chatUrl: "https://chat.deepseek.com/a/chat/saved-review",
+    });
+    expect(resumed.checkpoint?.chatgptConsensus).toBeUndefined();
+  });
+
+  it("rejects changing channels inside the same existing checkpoint", () => {
+    expect(() => mergeSession(legacySession(), { checkpoint: { reviewProvider: "deepseek" } }))
+      .toThrow(/cannot switch reviewer/);
+  });
+
+  it("does not carry old confirmations into a different task and reviewer", () => {
+    const previous = mergeSession(legacySession(true), { checkpoint: {
+      protocolState: "DONE", selfCheckStatus: "PASS", pageVerifyStatus: "NOT_APPLICABLE",
+    } });
+    expect(() => mergeSession(previous, {
+      taskId: "new-deepseek-review",
+      checkpoint: {
+        taskId: "new-deepseek-review", protocolState: "EXECUTING", reviewProvider: "deepseek",
+        reviewMode: "consensus", consensusRound: 1,
+      },
+    })).toThrow(/consensus confirmations/);
   });
 });
 

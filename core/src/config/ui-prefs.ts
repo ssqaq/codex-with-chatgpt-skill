@@ -1,5 +1,6 @@
 import path from "node:path";
 import { getStateDir, readJsonIfExists, writeSecureJson } from "./paths.js";
+import { parseReviewProvider, type ReviewProvider } from "../review/provider.js";
 
 export type SetupMode = "auto" | "manual";
 
@@ -23,12 +24,14 @@ export const SETUP_CHOICE_PROMPT = [
 ].join("\n");
 
 interface StoredUiPrefs {
+  reviewProvider?: ReviewProvider;
   developerModeEnabled?: boolean;
   setupMode?: SetupMode;
   updatedAt: string;
 }
 
 export interface UiPrefsView {
+  reviewProvider: ReviewProvider;
   developerModeEnabled: boolean;
   setupMode: SetupMode | null;
   setupChoicePrompt: string;
@@ -47,6 +50,7 @@ function readStored(): StoredUiPrefs | null {
   if (!raw || typeof raw !== "object") return null;
   const setupMode = raw.setupMode === "auto" || raw.setupMode === "manual" ? raw.setupMode : undefined;
   return {
+    reviewProvider: raw.reviewProvider === undefined ? undefined : parseReviewProvider(raw.reviewProvider),
     developerModeEnabled: raw.developerModeEnabled === true,
     setupMode,
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : new Date().toISOString(),
@@ -58,6 +62,7 @@ export function readUiPrefs(): UiPrefsView {
   const developerModeEnabled = stored?.developerModeEnabled === true;
   const setupMode = stored?.setupMode ?? null;
   return {
+    reviewProvider: stored?.reviewProvider ?? "deepseek",
     developerModeEnabled,
     setupMode,
     setupChoicePrompt: SETUP_CHOICE_PROMPT,
@@ -69,17 +74,20 @@ export function readUiPrefs(): UiPrefsView {
 }
 
 export interface UiPrefsPatch {
+  reviewProvider?: ReviewProvider;
   developerModeEnabled?: true;
   setupMode?: SetupMode;
 }
 
 export function mergeUiPrefs(patch: UiPrefsPatch): UiPrefsView {
+  const reviewProvider = patch.reviewProvider === undefined ? undefined : parseReviewProvider(patch.reviewProvider);
   if (patch.setupMode !== undefined && !SETUP_MODES.includes(patch.setupMode)) {
     throw new Error(`setup-mode must be one of ${SETUP_MODES.join(", ")}`);
   }
   const previous = readStored();
   const setupMode = patch.setupMode ?? previous?.setupMode;
   const stored: StoredUiPrefs = {
+    reviewProvider: reviewProvider ?? previous?.reviewProvider,
     updatedAt: new Date().toISOString(),
   };
   // Only persist "confirmed on". Never write false — that would skip the

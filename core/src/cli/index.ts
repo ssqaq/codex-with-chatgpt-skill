@@ -60,6 +60,8 @@ import {
 } from "../session/state.js";
 import { appendExecutionRecord } from "../execution/records.js";
 import { saveExecutionOutput } from "../execution/output.js";
+import { registerReviewCommands } from "./review.js";
+import { parseReviewProvider, parseReviewMode, providerLabel } from "../review/provider.js";
 
 const program = new Command();
 
@@ -1077,6 +1079,11 @@ session
   .option("--consensus-repeats <n>", "consecutive repeated disagreement count")
   .option("--codex-consensus <boolean>", "whether Codex confirmed consensus")
   .option("--chatgpt-consensus <boolean>", "whether ChatGPT confirmed consensus")
+  .option("--review-provider <name>", "reviewer for this checkpoint")
+  .option("--review-mode <mode>", "single | consensus")
+  .option("--reviewer-consensus <boolean>", "whether the selected reviewer confirmed consensus")
+  .option("--review-session-ref <ref>", "reference to the review task, not browser credentials")
+  .option("--codex-thread-id <id>", "Codex task owning this checkpoint")
   .option("--self-check <status>", "PASS or FAIL after local checks")
   .option("--page-verify <status>", "PASS, FAIL, or NOT_APPLICABLE")
   .option("--page-scope <text>", "page or function verified")
@@ -1109,6 +1116,11 @@ session
       consensusRepeats?: string;
       codexConsensus?: string;
       chatgptConsensus?: string;
+      reviewProvider?: string;
+      reviewMode?: string;
+      reviewerConsensus?: string;
+      reviewSessionRef?: string;
+      codexThreadId?: string;
       selfCheck?: string;
       pageVerify?: string;
       pageScope?: string;
@@ -1181,6 +1193,11 @@ session
               consensusRepeatedRounds: opts.consensusRepeats ? parseInt(opts.consensusRepeats, 10) : undefined,
               codexConsensus: parseOptionalBoolean(opts.codexConsensus, "codex-consensus"),
               chatgptConsensus: parseOptionalBoolean(opts.chatgptConsensus, "chatgpt-consensus"),
+              reviewProvider: opts.reviewProvider ? parseReviewProvider(opts.reviewProvider) : undefined,
+              reviewMode: opts.reviewMode ? parseReviewMode(opts.reviewMode) : undefined,
+              reviewerConsensus: parseOptionalBoolean(opts.reviewerConsensus, "reviewer-consensus"),
+              reviewSessionRef: opts.reviewSessionRef,
+              codexThreadId: opts.codexThreadId,
               selfCheckStatus: selfCheckRaw as SelfCheckStatus | undefined,
               pageVerifyStatus: pageVerifyRaw as PageVerifyStatus | undefined,
               pageScope: opts.pageScope,
@@ -1225,6 +1242,7 @@ prefsCmd
       say(JSON.stringify({ ok: true, ...prefs }));
       return;
     }
+    say(`默认评审渠道：${providerLabel(prefs.reviewProvider)}`);
     say(prefs.developerModeEnabled ? "开发人员模式：已记住已开启" : "开发人员模式：尚未记住");
     if (prefs.setupMode === "auto") say("配置方式：AI 自动化配置（预览版）");
     else if (prefs.setupMode === "manual") say("配置方式：手动教学配置");
@@ -1236,17 +1254,19 @@ prefsCmd
   .description("Save a ChatGPT setup choice for this machine")
   .option("--developer-mode", "remember that ChatGPT developer mode is on", false)
   .option("--setup-mode <mode>", "auto (preview) or manual")
+  .option("--review-provider <provider>", "默认渠道 deepseek | chatgpt")
   .option("--json", "machine-readable output", false)
-  .action((opts: { developerMode: boolean; setupMode?: string; json: boolean }) => {
+  .action((opts: { developerMode: boolean; setupMode?: string; reviewProvider?: string; json: boolean }) => {
     try {
       const modeRaw = opts.setupMode?.trim().toLowerCase();
       if (modeRaw && !SETUP_MODES.includes(modeRaw as SetupMode)) {
         throw new Error(`setup-mode must be one of ${SETUP_MODES.join(", ")}`);
       }
-      if (!opts.developerMode && !modeRaw) {
-        throw new Error("nothing to save: pass --developer-mode and/or --setup-mode");
+      if (!opts.developerMode && !modeRaw && !opts.reviewProvider) {
+        throw new Error("nothing to save: pass --developer-mode, --setup-mode, or --review-provider");
       }
       const prefs = mergeUiPrefs({
+        reviewProvider: opts.reviewProvider === undefined ? undefined : parseReviewProvider(opts.reviewProvider),
         developerModeEnabled: opts.developerMode ? true : undefined,
         setupMode: modeRaw as SetupMode | undefined,
       });
@@ -1255,6 +1275,7 @@ prefsCmd
         return;
       }
       if (opts.developerMode) check("已记住开发人员模式已开启");
+      if (opts.reviewProvider) check(`默认评审渠道：${providerLabel(prefs.reviewProvider)}`);
       if (modeRaw === "auto") check("已记住配置方式：AI 自动化配置（预览版）");
       if (modeRaw === "manual") check("已记住配置方式：手动教学配置");
     } catch (error) {
@@ -1494,6 +1515,7 @@ function handleCliError(error: unknown, json: boolean): void {
   process.exitCode = 1;
 }
 
+registerReviewCommands(program);
 program.parseAsync(process.argv).catch((error: Error) => {
   cross(error.message);
   process.exit(1);

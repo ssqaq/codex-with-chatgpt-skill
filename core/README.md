@@ -1,6 +1,6 @@
 # Codex with ChatGPT
 
-> ChatGPT thinks. Codex works.
+> DeepSeek or ChatGPT thinks. Codex works.
 > ChatGPT 负责思考，Codex 负责干活。
 
 > [!IMPORTANT]
@@ -98,6 +98,10 @@ anytime. / Skill 每天自动检查一次 GitHub，有新版本会自动更新�
 
 *The sections below are in English. 以下详细内容为英文，中文完整版见
 [README.zh-CN.md](README.zh-CN.md)。*
+
+## Review channel
+
+DeepSeek is the default web reviewer. Keep DeepSeek's “深度思考” and “智能搜索” toggles enabled. Say “Use DeepSeek to review this issue, then implement and test.” Say “Use GPT/ChatGPT to review this issue” for the existing ChatGPT path. DeepSeek receives summaries only: no full source, full diff, or logs.
 
 ## Install → Setup → Use (manual)
 
@@ -252,7 +256,7 @@ docs/         architecture / protocol / security / troubleshooting
 
 ## Status & disclaimer
 
-Current version 1.15.5. Verified end-to-end: bridge, OAuth + pairing, public tunnel, ChatGPT
+Current version 1.16.0. Verified end-to-end: bridge, OAuth + pairing, public tunnel, ChatGPT
 connector setup, zero-touch first-run experience.
 
 **Unofficial community project. Not affiliated with or endorsed by OpenAI.**

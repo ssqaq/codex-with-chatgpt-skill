@@ -4,6 +4,8 @@ Read this reference for an actual coding task, text-only multi-round consensus r
 
 ## Workflow: coding task（"使用 Codex with ChatGPT 完成 XXX"）
 
+Review-channel selection is saved per task. New review tasks default to DeepSeek; explicit GPT/ChatGPT instructions select the existing ChatGPT path. Never mix a DeepSeek task with a ChatGPT task.
+
 Protocol states sent to ChatGPT: INIT → (CONSENSUS_PLAN ↔ CONSENSUS_REVIEW → CONSENSUS)? → PLAN → EXECUTING → EXECUTED → REVIEW → (PLAN | DONE | BLOCKED).
 Local checkpoint states (session only, never a ChatGPT `STATE:` line):
 `INIT`, `CONSENSUS_PLAN`, `CONSENSUS_REVIEW`, `CONSENSUS`, `PLAN_RECEIVED`, `EXECUTING`, `EXECUTED_LOCAL`, `EXECUTED_SENT`, `DONE`, `BLOCKED`.

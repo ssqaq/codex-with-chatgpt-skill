@@ -1,11 +1,29 @@
 ---
 name: codex-with-chatgpt
 description: >
-  让 ChatGPT 负责想方案、检查结果，Codex 负责改文件、运行命令和测试。
+  让 DeepSeek 或 ChatGPT 负责想方案、检查结果，Codex 负责改文件、运行命令和测试。
   当用户说“用 ChatGPT 帮我规划并完成修改”“使用 Codex with ChatGPT”，
   “多轮方案评审”“多轮复审后再修改代码”
   或需要把 ChatGPT 连接到当前项目时使用。适合代码开发、报错排查、功能实现和结果复核。
 ---
+
+## 评审渠道：DeepSeek 或 ChatGPT
+
+默认评审渠道是 DeepSeek。它使用 Codex 右侧栏内置浏览器打开 DeepSeek 官网，保持“深度思考”和“智能搜索”开启；现在官网已把快速、专家、识图模式合并，Skill 以页面实际显示为准，不再寻找旧的“专家模式”按钮。
+
+直接这样说：
+
+> 使用 DeepSeek 评审这个问题，然后按意见修改并测试。
+
+想改回 ChatGPT：
+
+> 使用 GPT 评审这个问题，然后按意见修改并测试。
+
+多轮 DeepSeek 评审：
+
+> 使用 DeepSeek 多轮评审，双方达成共识后再修改代码。每轮显示轮数、同意点、分歧点和下一步。
+
+DeepSeek 只接收需求摘要、事实、方案摘要、分歧、文件方向和测试结果，不接收完整源码、完整 diff 或日志。单次评审和多轮评审都回显到 Codex；执行门槛满足后才会修改、测试和复核。DeepSeek 的专用 Skill 负责网页会话、标签页隔离、回执和恢复；如果该 Skill 未安装或网页回执不完整，会暂停且不修改文件。
 
 # Codex with ChatGPT
 
@@ -83,8 +101,8 @@ description: >
 
 ## 任务路由
 
-- 普通开发、报错排查、功能实现：走快速流程。
-- 用户说“先做方案、多轮评审后再修改”“和 ChatGPT 讨论到共识”或“先敲定方案，再自动改代码”：先走纯文字共识流程，双方确认后才改文件。
+- 普通开发、报错排查、功能实现：按当前任务选择评审渠道；新评审默认 DeepSeek，明确说“用 GPT/ChatGPT”时使用 ChatGPT。
+- 用户说“先做方案、多轮评审后再修改”“和 ChatGPT/DeepSeek 讨论到共识”或“先敲定方案，再自动改代码”：先走纯文字共识流程，双方确认后才改文件。
 - 用户提供截图或要求分析图片：先走只读 `read_image`，再接入快速流程或共识流程。
 - 每次文件修改后都必须完成自动化检查、代码复核，以及适用时的内置浏览器页面验证；通过后才可提交、推送或同步 GitHub。
 
@@ -192,6 +210,10 @@ Skill 不能把账号看不到的模型添加到 ChatGPT，也不能强制网页
 
 ## 协作协议
 
+## 评审状态命令
+
+需要查看或恢复渠道状态时，可使用 `c2c review resolve`、`c2c review start`、`c2c review get`、`c2c review message`、`c2c review prepare`、`c2c review advance`、`c2c review sync`、`c2c review cancel`、`c2c review execute` 和 `c2c review finish`。这些命令只保存短摘要和状态；网页发送仍由对应的内置浏览器 Skill 完成。
+
 所有发给 ChatGPT 的控制消息以 `[C2C]` 开头，只发送状态和短摘要，不粘贴完整文件、diff 或日志。编码任务、共识状态、自检字段和恢复规则见 [references/protocol.md](references/protocol.md)；线协议定义见 [core/docs/protocol.md](core/docs/protocol.md)。
 
 ## 本机路径和 CLI
@@ -205,4 +227,4 @@ Skill 不能把账号看不到的模型添加到 ChatGPT，也不能强制网页
 
 ## 必须记住
 
-ChatGPT 只负责规划和复核；Codex 才负责改文件、运行命令和测试。任何检查未通过，都不能声称完成或同步。
+DeepSeek 或 ChatGPT 只负责规划和复核；Codex 才负责改文件、运行命令和测试。任何检查未通过，都不能声称完成或同步。

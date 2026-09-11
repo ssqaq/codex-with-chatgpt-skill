@@ -1,6 +1,8 @@
 # C2C Agent Protocol
 
-Control plane: Computer Use (tiny structured messages typed into the ChatGPT UI).
+Review provider: DEEPSEEK or CHATGPT, selected per task; new review tasks default to DEEPSEEK. DeepSeek uses its existing official in-app-browser Skill and receives only bounded summaries.
+
+Control plane: Computer Use (tiny structured messages typed into the reviewer UI).
 Data plane: MCP (ChatGPT pulls only task-approved files, diffs, search results, or
 images itself; the repository is not uploaded as a whole).
 
@@ -19,7 +21,8 @@ INIT → CONSENSUS_PLAN ↔ CONSENSUS_REVIEW → CONSENSUS → PLAN → EXECUTIN
 
 | State | Sender | Meaning |
 | --- | --- | --- |
-| INIT | Codex | New task; asks ChatGPT to inspect + plan |
+| INIT | Codex | New task; asks the selected reviewer to inspect + plan |
+| REVIEW_PROVIDER | Codex | DEEPSEEK or CHATGPT; not a model claim |
 | CONSENSUS_PLAN | Codex | Text-only draft plan submitted for review |
 | CONSENSUS_REVIEW | ChatGPT | Review of the current draft; revise or confirm |
 | CONSENSUS | both | Both sides explicitly confirmed the final plan |

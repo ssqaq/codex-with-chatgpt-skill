@@ -1,6 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { getStateDir, writeSecureJson } from "../config/paths.js";
+import { parseReviewProvider, parseReviewMode, type ReviewProvider, type ReviewMode } from "../review/provider.js";
 
 export type ConversationMode = "long-chat" | "project";
 
@@ -18,7 +19,7 @@ export type ProtocolState =
   | "DONE"
   | "BLOCKED";
 
-export type WaitingFor = "none" | "GPT_PLAN" | "GPT_REVIEW" | "GPT_CONSENSUS" | "USER";
+export type WaitingFor = "none" | "GPT_PLAN" | "GPT_REVIEW" | "GPT_CONSENSUS" | "REVIEWER_PLAN" | "REVIEWER_REVIEW" | "REVIEWER_CONSENSUS" | "USER";
 export type SelfCheckStatus = "PASS" | "FAIL";
 export type PageVerifyStatus = "PASS" | "FAIL" | "NOT_APPLICABLE";
 
@@ -35,7 +36,7 @@ export const PROTOCOL_STATES: readonly ProtocolState[] = [
   "BLOCKED",
 ];
 
-export const WAITING_FOR: readonly WaitingFor[] = ["none", "GPT_PLAN", "GPT_REVIEW", "GPT_CONSENSUS", "USER"];
+export const WAITING_FOR: readonly WaitingFor[] = ["none", "GPT_PLAN", "GPT_REVIEW", "GPT_CONSENSUS", "REVIEWER_PLAN", "REVIEWER_REVIEW", "REVIEWER_CONSENSUS", "USER"];
 
 const CONSENSUS_EXECUTION_STATES: readonly ProtocolState[] = [
   "PLAN_RECEIVED",
@@ -48,6 +49,11 @@ const CONSENSUS_EXECUTION_STATES: readonly ProtocolState[] = [
 const VERIFICATION_REQUIRED_STATES: readonly ProtocolState[] = ["EXECUTED_LOCAL", "EXECUTED_SENT", "DONE"];
 
 export interface TaskCheckpoint {
+  reviewProvider?: ReviewProvider;
+  reviewMode?: ReviewMode;
+  reviewerConsensus?: boolean;
+  reviewSessionRef?: string;
+  codexThreadId?: string;
   taskId: string;
   iteration: number;
   protocolState: ProtocolState;
@@ -323,45 +329,55 @@ export function mergeSession(previous: SavedSession | null, patch: SessionPatch)
     throw new Error("nothing to save: pass --url, --project-url, or --mode");
   }
 
-  let checkpoint = previous?.checkpoint;
+  const patchTaskId = patch.checkpoint?.taskId ?? patch.taskId;
+  const priorCheckpoint = patchTaskId && previous?.checkpoint?.taskId !== patchTaskId ? undefined : previous?.checkpoint;
+  let checkpoint = priorCheckpoint;
   if (patch.clearCheckpoint) {
     checkpoint = undefined;
   } else if (patch.checkpoint) {
-    const taskId = patch.checkpoint.taskId ?? patch.taskId ?? previous?.checkpoint?.taskId ?? previous?.taskId;
+    const taskId = patch.checkpoint.taskId ?? patch.taskId ?? priorCheckpoint?.taskId ?? previous?.taskId;
     const iteration =
       patch.checkpoint.iteration ??
       patch.iteration ??
-      previous?.checkpoint?.iteration ??
+      priorCheckpoint?.iteration ??
       previous?.iteration ??
       0;
-    const protocolState = patch.checkpoint.protocolState ?? previous?.checkpoint?.protocolState;
+    const protocolState = patch.checkpoint.protocolState ?? priorCheckpoint?.protocolState;
     if (!taskId || !protocolState) {
       throw new Error("checkpoint requires task id and protocol state");
     }
     if (!PROTOCOL_STATES.includes(protocolState)) {
       throw new Error(`protocol-state must be one of ${PROTOCOL_STATES.join(", ")}`);
     }
-    const waitingFor = patch.checkpoint.waitingFor ?? previous?.checkpoint?.waitingFor ?? "none";
+    const waitingFor = patch.checkpoint.waitingFor ?? priorCheckpoint?.waitingFor ?? "none";
     if (!WAITING_FOR.includes(waitingFor)) {
       throw new Error(`waiting-for must be one of ${WAITING_FOR.join(", ")}`);
     }
-    const consensusRound = patch.checkpoint.consensusRound ?? previous?.checkpoint?.consensusRound;
+    const consensusRound = patch.checkpoint.consensusRound ?? priorCheckpoint?.consensusRound;
     if (consensusRound !== undefined && (!Number.isInteger(consensusRound) || consensusRound < 1)) {
       throw new Error("consensus-round must be a positive integer");
     }
     const consensusRepeatedRounds =
-      patch.checkpoint.consensusRepeatedRounds ?? previous?.checkpoint?.consensusRepeatedRounds;
+      patch.checkpoint.consensusRepeatedRounds ?? priorCheckpoint?.consensusRepeatedRounds;
     if (
       consensusRepeatedRounds !== undefined &&
       (!Number.isInteger(consensusRepeatedRounds) || consensusRepeatedRounds < 0)
     ) {
       throw new Error("consensus-repeats must be a non-negative integer");
     }
-    const consensusMode = patch.checkpoint.consensusMode ?? previous?.checkpoint?.consensusMode;
-    const codexConsensus = patch.checkpoint.codexConsensus ?? previous?.checkpoint?.codexConsensus;
-    const chatgptConsensus = patch.checkpoint.chatgptConsensus ?? previous?.checkpoint?.chatgptConsensus;
-    const selfCheckStatus = patch.checkpoint.selfCheckStatus ?? previous?.checkpoint?.selfCheckStatus;
-    const pageVerifyStatus = patch.checkpoint.pageVerifyStatus ?? previous?.checkpoint?.pageVerifyStatus;
+    const consensusMode = patch.checkpoint.consensusMode ?? priorCheckpoint?.consensusMode;
+    const codexConsensus = patch.checkpoint.codexConsensus ?? priorCheckpoint?.codexConsensus;
+    const reviewProvider = parseReviewProvider(patch.checkpoint.reviewProvider ?? priorCheckpoint?.reviewProvider ?? "chatgpt");
+    if (priorCheckpoint?.taskId === taskId && reviewProvider !== (priorCheckpoint.reviewProvider ?? "chatgpt")) {
+      throw new Error("cannot switch reviewer in an existing checkpoint");
+    }
+    const reviewMode = parseReviewMode(patch.checkpoint.reviewMode ?? priorCheckpoint?.reviewMode ?? (consensusMode ? "consensus" : "single"));
+    const chatgptConsensus = patch.checkpoint.chatgptConsensus ?? priorCheckpoint?.chatgptConsensus;
+    const reviewerConsensus = patch.checkpoint.reviewerConsensus ??
+      (reviewProvider === "chatgpt" && patch.checkpoint.chatgptConsensus !== undefined ? patch.checkpoint.chatgptConsensus : undefined) ??
+      priorCheckpoint?.reviewerConsensus ?? (reviewProvider === "chatgpt" ? chatgptConsensus : false);
+    const selfCheckStatus = patch.checkpoint.selfCheckStatus ?? priorCheckpoint?.selfCheckStatus;
+    const pageVerifyStatus = patch.checkpoint.pageVerifyStatus ?? priorCheckpoint?.pageVerifyStatus;
     if (selfCheckStatus !== undefined && selfCheckStatus !== "PASS" && selfCheckStatus !== "FAIL") {
       throw new Error("self-check must be PASS or FAIL");
     }
@@ -373,7 +389,7 @@ export function mergeSession(previous: SavedSession | null, patch: SessionPatch)
     ) {
       throw new Error("page-verify must be PASS, FAIL, or NOT_APPLICABLE");
     }
-    if (consensusMode && CONSENSUS_EXECUTION_STATES.includes(protocolState) && !(codexConsensus && chatgptConsensus)) {
+    if ((consensusMode || reviewMode === "consensus") && CONSENSUS_EXECUTION_STATES.includes(protocolState) && !(codexConsensus && reviewerConsensus)) {
       throw new Error("consensus confirmations are required before execution");
     }
     if (
@@ -383,40 +399,45 @@ export function mergeSession(previous: SavedSession | null, patch: SessionPatch)
       throw new Error("post-change verification is required before execution can finish");
     }
     checkpoint = {
+      reviewProvider,
+      reviewMode,
+      reviewerConsensus,
+      reviewSessionRef: patch.checkpoint.reviewSessionRef ?? priorCheckpoint?.reviewSessionRef,
+      codexThreadId: patch.checkpoint.codexThreadId ?? priorCheckpoint?.codexThreadId,
       taskId,
       iteration,
       protocolState,
       waitingFor,
       originalGoal: capCheckpointText(
-        patch.checkpoint.originalGoal ?? previous?.checkpoint?.originalGoal,
+        patch.checkpoint.originalGoal ?? priorCheckpoint?.originalGoal,
         CHECKPOINT_LIMITS.originalGoal
       ),
       completedSubtasks: capCheckpointText(
-        patch.checkpoint.completedSubtasks ?? previous?.checkpoint?.completedSubtasks,
+        patch.checkpoint.completedSubtasks ?? priorCheckpoint?.completedSubtasks,
         CHECKPOINT_LIMITS.completedSubtasks
       ),
       knownIssues: capCheckpointText(
-        patch.checkpoint.knownIssues ?? previous?.checkpoint?.knownIssues,
+        patch.checkpoint.knownIssues ?? priorCheckpoint?.knownIssues,
         CHECKPOINT_LIMITS.knownIssues
       ),
       nextExpectedStep: capCheckpointText(
-        patch.checkpoint.nextExpectedStep ?? previous?.checkpoint?.nextExpectedStep,
+        patch.checkpoint.nextExpectedStep ?? priorCheckpoint?.nextExpectedStep,
         CHECKPOINT_LIMITS.nextExpectedStep
       ),
-      chatUrl: patch.checkpoint.chatUrl ?? previous?.checkpoint?.chatUrl ?? url,
-      projectUrl: patch.checkpoint.projectUrl ?? previous?.checkpoint?.projectUrl ?? projectUrl,
+      chatUrl: patch.checkpoint.chatUrl ?? priorCheckpoint?.chatUrl ?? url,
+      projectUrl: patch.checkpoint.projectUrl ?? priorCheckpoint?.projectUrl ?? projectUrl,
       consensusMode,
       consensusRound,
       consensusPlan: capCheckpointText(
-        patch.checkpoint.consensusPlan ?? previous?.checkpoint?.consensusPlan,
+        patch.checkpoint.consensusPlan ?? priorCheckpoint?.consensusPlan,
         CHECKPOINT_LIMITS.consensusPlan
       ),
       consensusDisagreement: capCheckpointText(
-        patch.checkpoint.consensusDisagreement ?? previous?.checkpoint?.consensusDisagreement,
+        patch.checkpoint.consensusDisagreement ?? priorCheckpoint?.consensusDisagreement,
         CHECKPOINT_LIMITS.consensusDisagreement
       ),
       consensusDisagreementFingerprint: capCheckpointText(
-        patch.checkpoint.consensusDisagreementFingerprint ?? previous?.checkpoint?.consensusDisagreementFingerprint,
+        patch.checkpoint.consensusDisagreementFingerprint ?? priorCheckpoint?.consensusDisagreementFingerprint,
         CHECKPOINT_LIMITS.consensusDisagreementFingerprint
       ),
       consensusRepeatedRounds,
@@ -425,16 +446,16 @@ export function mergeSession(previous: SavedSession | null, patch: SessionPatch)
       selfCheckStatus,
       pageVerifyStatus,
       pageScope: capCheckpointText(
-        patch.checkpoint.pageScope ?? previous?.checkpoint?.pageScope,
+        patch.checkpoint.pageScope ?? priorCheckpoint?.pageScope,
         CHECKPOINT_LIMITS.pageScope
       ),
-      verificationAt: patch.checkpoint.verificationAt ?? previous?.checkpoint?.verificationAt,
+      verificationAt: patch.checkpoint.verificationAt ?? priorCheckpoint?.verificationAt,
       modelName: capCheckpointText(
-        patch.checkpoint.modelName ?? previous?.checkpoint?.modelName,
+        patch.checkpoint.modelName ?? priorCheckpoint?.modelName,
         120
       ),
       reasoningStrength: capCheckpointText(
-        patch.checkpoint.reasoningStrength ?? previous?.checkpoint?.reasoningStrength,
+        patch.checkpoint.reasoningStrength ?? priorCheckpoint?.reasoningStrength,
         80
       ),
       updatedAt: new Date().toISOString(),
