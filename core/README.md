@@ -105,6 +105,17 @@ anytime. / Skill 每天自动检查一次 GitHub，有新版本会自动更新�
 2. Tell Codex: **"Set up Codex with ChatGPT."** (中文: "使用 Codex with ChatGPT 完成首次配置。")
 3. Use Codex normally: **"Use Codex with ChatGPT to implement XXX."**
 
+To discuss a plan over multiple rounds before changing code, say:
+
+```text
+Use Codex with ChatGPT.
+Run a text-only multi-round plan review first; do not edit files yet.
+Have ChatGPT and Codex discuss the plan until both explicitly reach CONSENSUS.
+Show the round number, agreements, disagreements, and next step each round.
+After consensus, automatically edit the code, run tests, and review the result.
+Task: describe what you want to change or fix.
+```
+
 That's the whole manual. You don't need to know what MCP, OAuth, tunnels,
 ports or localhost are — Codex configures everything automatically and you
 just see:
@@ -237,7 +248,7 @@ docs/         architecture / protocol / security / troubleshooting
 
 ## Status & disclaimer
 
-Current version 1.15.3. Verified end-to-end: bridge, OAuth + pairing, public tunnel, ChatGPT
+Current version 1.15.4. Verified end-to-end: bridge, OAuth + pairing, public tunnel, ChatGPT
 connector setup, zero-touch first-run experience.
 
 **Unofficial community project. Not affiliated with or endorsed by OpenAI.**
