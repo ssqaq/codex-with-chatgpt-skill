@@ -256,7 +256,7 @@ docs/         architecture / protocol / security / troubleshooting
 
 ## Status & disclaimer
 
-Current version 1.16.1. Verified end-to-end: bridge, OAuth + pairing, public tunnel, ChatGPT
+Current version 1.16.2. Verified end-to-end: bridge, OAuth + pairing, public tunnel, ChatGPT
 connector setup, zero-touch first-run experience.
 
 **Unofficial community project. Not affiliated with or endorsed by OpenAI.**
