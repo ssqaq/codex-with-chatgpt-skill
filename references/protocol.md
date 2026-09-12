@@ -211,10 +211,16 @@ If status is restricted, ignore it and review from git_diff.
     `c2c session set -w <ws> --protocol-state BLOCKED --waiting-for USER --known-issues "<short reason>"`
 
 
-## 多轮评审等待与恢复（1.18.0）
+## 多轮评审等待与恢复（1.19.0）
 
 发送证据、计时、失败判断与恢复使用唯一规则：[等待与恢复](reliability.md)。正常生成不使用两次检查或 60 秒暂停条件；页面观察不代替回执和双方共识。恢复只从同任务检查点读取，不能从全局最后一行获取执行许可。
 
-## 429 限流状态（1.18.3）
+## 后续轮次和执行状态（1.19.0）
 
-限流时记录 `detectedAt`、`attempts`、`source` 和可选的 `retryAfterAt`，状态为暂停，执行门槛关闭。恢复必须显式请求且到达 `retryAfterAt`；恢复失败再次保存限流次数。状态不保存服务原始响应、令牌或私密头。
+第 1 轮消息使用 `PLAN_SUMMARY`。第 2 轮及以后使用 `ROUND_DELTA`，只包含新增事实、修改点和当前分歧；完整上一轮摘要只保存在本地状态，不重复发给评审网页。
+
+等待网页回复和 Codex 执行是两个独立状态：前者显示本轮等待分钟数，后者显示 `executionStartedAt` 之后的执行分钟数。共识通过后必须立即发起普通执行任务接力，不能等待用户再次发送“继续”；计划模式接力会记录 `handoffRequestedAt` 和 `autoStart=true`。
+
+## 429/503 服务暂停（1.19.0）
+
+遇到 429 或 503 时记录 `statusCode`、`detectedAt`、`attempts`、`source`、`backoffSeconds` 和 `retryAfterAt`，状态为暂停，执行门槛关闭。没有服务提供的时间时，429 从 30 秒、503 从 60 秒开始指数退避，最多 15 分钟。恢复必须显式请求且到达 `retryAfterAt`；恢复失败再次保存次数，不重复发送或重建会话。状态不保存服务原始响应、令牌或私密头。

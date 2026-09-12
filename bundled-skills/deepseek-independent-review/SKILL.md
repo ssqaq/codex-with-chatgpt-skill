@@ -3,6 +3,12 @@ name: deepseek-independent-review
 description: "通过 DeepSeek 官网做一次独立技术评审。用户显式点名本 Skill，或明确要求 DeepSeek 独立找错、反驳 Codex、比较方案、复核根因或验证 Codex 判断时使用；普通提及 DeepSeek 不触发。固定在 Codex 右侧栏内置浏览器打开 https://chat.deepseek.com/，目标为保持深度思考和智能搜索开启；一个 Codex thread 只绑定一个专用官网会话和 tab，同一 thread 后续 R2…Rn 复用。"
 ---
 
+## 配套更新 1.19.0
+
+- 第 1 次发送完整短摘要；后续复核只发送新增事实、修改点和当前分歧，不重复上一轮全文。
+- 等待网页和 Codex 执行分别计时；连续 10 分钟没有新回复才暂停。
+- 429 和 503 按服务给出的时间或递增退避恢复，不重复发送、不重复建会话。
+
 ## 配套更新 1.18.1
 
 通过 codex-with-chatgpt 进入评审时，发送、等待与恢复遵循 [references/reliability.md](references/reliability.md)。发送前使用新鲜浏览器证据；正常回复等待不受两次无变化规则影响；恢复必须重新核对原页面，不直接恢复权限。

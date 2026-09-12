@@ -404,4 +404,16 @@ describe("DeepSeek installed-script dispatch and state reads", () => {
     expect(error).toBeInstanceOf(ReviewRateLimitError);
     expect(error).toMatchObject({ source: "reviewer", retryAfterSeconds: 12 });
   });
+
+  it("classifies 503 service-unavailable responses without leaking output", async () => {
+    const { session } = fixture();
+    execScript.mockRejectedValueOnce(Object.assign(new Error("503 Service Unavailable private-token"), {
+      statusCode: 503,
+    }));
+    const error = await runDeepseek(session, "advance").catch(value => value);
+    expect(error).toBeInstanceOf(ReviewRateLimitError);
+    expect(String(error)).toContain("503");
+    expect(String(error)).not.toContain("private-token");
+    expect(error).toMatchObject({ source: "reviewer", statusCode: "503" });
+  });
 });

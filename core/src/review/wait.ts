@@ -9,6 +9,8 @@ export const WaitSchema = z.object({
   lastReportedMinute: z.number().int().min(-1).default(-1),
 }).strict();
 export type ReviewWait = z.infer<typeof WaitSchema>;
+export const REVIEW_IDLE_TIMEOUT_MINUTES = 10;
+export const REVIEW_IDLE_TIMEOUT_MS = REVIEW_IDLE_TIMEOUT_MINUTES * 60_000;
 export const ObservationSchema = z.object({
   taskId: z.string(), threadId: z.string(), round: z.number().int().positive(),
   observedAt: z.string().datetime(), observationId: z.string().min(1).max(200),
@@ -59,7 +61,7 @@ export function waitProgress(s: ReviewSession, now = new Date()): { message: str
   const stale = !w.lastCheckedAt || now.getTime() - Date.parse(w.lastCheckedAt) > 90000;
   const idle = now.getTime() - Date.parse(w.lastProgressAt);
   const pauseReason = w.pageStatus === "unavailable" || w.pageStatus === "login-required" ? "原页面不可用，需要恢复" :
-    idle >= 600000 && w.pageStatus !== "reply-ready" ? "已连续 10 分钟没有确认到新回复内容，暂停并检查原页面" : "";
+    idle >= REVIEW_IDLE_TIMEOUT_MS && w.pageStatus !== "reply-ready" ? `已连续 ${REVIEW_IDLE_TIMEOUT_MINUTES} 分钟没有确认到新回复内容，暂停并检查原页面` : "";
   const detail = stale ? "最近未能确认网页状态" : w.pageStatus === "thinking" ? "最近检查：网页仍显示生成中" :
     w.pageStatus === "reply-ready" ? "网页回复已结束，正在核对本轮结果" : "网页状态需要核对";
   const label = s.reviewMode === "consensus" ? `多轮评审：第 ${s.round} 轮` : "单次评审";

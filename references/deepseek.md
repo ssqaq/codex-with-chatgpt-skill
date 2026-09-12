@@ -20,7 +20,12 @@
 
 网页发送、会话绑定、回执和恢复由随仓库安装的 `deepseek-independent-review` / `deepseek-consensus-review` Skill 处理。安装器检查版本和文件；缺失时修复安装，不重新建立评审对话。页面模式未确认、回执不完整或会话身份不一致时，必须暂停且不能直接重发。
 
-## v1.18.0 等待与恢复
+## v1.19.0 等待、增量和恢复
+
+- 第 1 轮发送完整短摘要；第 2 轮起只发送 `ROUND_DELTA`，包含新增事实、修改点和当前分歧，不重复上一轮全文。
+- 等待 DeepSeek 和 Codex 执行分开计时，分别显示网页等待分钟数和执行分钟数。
+- 连续 10 分钟没有确认到新的回复内容才暂停；429/503 按明确时间或递增退避恢复，不重复发送或建会话。
+- 达成共识后立即发起普通执行任务接力，不等待用户再次发送“继续”。
 
 - 一轮发送准备：`deepseek-consensus-review/scripts/send_review_round.ps1`。必须提供实际 `-EvidenceFile`、已有用户授权依据及当前 lease；不再从本地状态猜测网页。只返回准备状态，实际提交和回执由内置浏览器完成。
 - 每轮留底账：`deepseek-review-state\audit\round-audit.jsonl`，只追加，不记正文和敏感信息。

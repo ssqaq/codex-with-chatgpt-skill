@@ -6,8 +6,8 @@ import { Workspace } from "../workspace/manager.js";
 import { mergeSession, readSession, sessionFile, writeSession } from "../session/state.js";
 import { deepseekDependency, readDeepseek, ReviewRateLimitError, runDeepseek } from "../review/deepseek.js";
 import { parseReviewMode, selectReviewer } from "../review/provider.js";
-import { beginReviewExecution, canExecuteReview, changeReview, clearReviewRateLimit, isReviewTerminal, markReviewRateLimited, newReview, readReview, recoverReview, renderReview, canRetryRateLimit, type ReviewSession } from "../review/state.js";
-import { buildReviewMessage } from "../review/message.js";
+import { beginReviewExecution, canExecuteReview, changeReview, clearReviewRateLimit, executionProgress, isReviewTerminal, markReviewRateLimited, newReview, readReview, recoverReview, renderReview, canRetryRateLimit, type ReviewSession } from "../review/state.js";
+import { buildReviewMessage, buildRoundDelta } from "../review/message.js";
 import { observeReview, trackWait, waitProgress } from "../review/wait.js";
 
 type Options = { workspace?: string; thread?: string; json?: boolean; provider?: string; request?: string; mode?: string; task?: string; summary?: string; selfCheck?: string; pageVerify?: string; evidence?: string; planModeDetected?: boolean; executionThread?: string; retryRateLimit?: boolean };
@@ -136,8 +136,16 @@ export function registerReviewCommands(program: Command): void {
     const next = observeReview(s, JSON.parse(input.replace(/^\uFEFF/, "")));
     output(save(s, { ...next, recoveryRequired: next.wait?.pageStatus === "thinking" || next.wait?.pageStatus === "reply-ready" ? false : s.recoveryRequired }), opts);
   });
-  action(command("heartbeat", "按保存的等待起点计时，每满一分钟生成一次回显；不访问网页"), opts => {
+  action(command("heartbeat", "分别按等待或执行起点计时，每满一分钟生成一次回显；不访问网页"), opts => {
     const s = current(opts), checked = refresh(s), progress = waitProgress(checked);
+    if (checked.phase === "EXECUTING") {
+      const execution = executionProgress(checked);
+      const shouldReport = execution.shouldReport;
+      const next = save(s, { ...checked, executionLastReportedMinute: shouldReport ? execution.minute : checked.executionLastReportedMinute });
+      const message = shouldReport ? execution.message : "";
+      console.log(opts.json ? JSON.stringify({ ok: true, shouldReport, message, phase: next.phase, round: next.round, executionMinute: execution.minute, canExecute: canExecuteReview(next) }) : message);
+      return;
+    }
     const active = checked.phase === "WAITING" || (checked.phase === "BLOCKED" && s.phase === "WAITING");
     const shouldReport = active && (progress.shouldReport || checked.phase !== s.phase);
     const next = save(s, { ...checked, wait: shouldReport && checked.wait ? { ...checked.wait, lastReportedMinute: progress.minute } : checked.wait });
@@ -148,7 +156,8 @@ export function registerReviewCommands(program: Command): void {
     .requiredOption("--summary <text>", "修订后的短方案摘要"), opts => {
     const s = current(opts), checked = refresh(s);
     if (checked.reviewMode !== "consensus" || checked.phase !== "REVIEWED" || !checked.replyReceived) throw new Error("必须先收到本轮完整评审并核对分歧，才能准备下一轮。");
-    const next: ReviewSession = { ...checked, summary: opts.summary!.trim(), round: checked.round + 1,
+    const revisedSummary = opts.summary!.trim();
+    const next: ReviewSession = { ...checked, previousSummary: checked.summary, roundDelta: buildRoundDelta(checked.summary, revisedSummary, checked.disagreements), summary: revisedSummary, round: checked.round + 1,
       phase: "PREPARING", reviewerConsensus: false, codexConsensus: false, replyReceived: false,
       wait: undefined,
       receiptStatus: "none", blockedReason: "", nextAction: "按专用 Skill 准备下一轮消息，再用内置浏览器发送" };
@@ -165,7 +174,7 @@ export function registerReviewCommands(program: Command): void {
     const s = current(opts); output(save(s, refresh(s)), opts);
   });
   action(command("advance", "推进专用 Skill 的下一步，网页仍由内置浏览器操作")
-    .option("--retry-rate-limit", "限流后到达恢复时间时，只恢复检查一次", false), async opts => {
+    .option("--retry-rate-limit", "429/503 暂停后到达恢复时间时，只恢复检查一次", false), async opts => {
     const s = current(opts);
     if (isReviewTerminal(s)) { output(s, opts); return; }
     if (s.reviewProvider === "chatgpt") { output(save(s, refresh(s)), opts); return; }
@@ -189,7 +198,7 @@ export function registerReviewCommands(program: Command): void {
       output(save(s, synced), opts);
     } catch (error) {
       if (error instanceof ReviewRateLimitError) {
-        const blocked = markReviewRateLimited(s, { source: error.source, retryAfterSeconds: error.retryAfterSeconds });
+        const blocked = markReviewRateLimited(s, { source: error.source, statusCode: error.statusCode, retryAfterSeconds: error.retryAfterSeconds });
         output(save(s, blocked), opts); process.exitCode = 1; return;
       }
       const blocked = { ...s, phase: "BLOCKED" as const, blockedReason: (error as Error).message, nextAction: "检查原任务和依赖；不重发、不切换渠道" };
@@ -228,10 +237,12 @@ export function registerReviewCommands(program: Command): void {
           sourceThreadId: next.threadId,
           taskId: next.taskId,
           round: next.round,
+          autoStart: true,
+          requestedAt: next.handoffRequestedAt,
           summary: next.summary,
           agreements: next.agreements,
           result: next.result,
-          instruction: "立即在同一工作区创建普通执行任务；不要重新评审，不要等待用户再发继续。创建后用 --execution-thread 记录新任务编号。",
+          instruction: "现在立即在同一工作区创建并接手普通执行任务；不要重新评审，不要等待用户再发继续。接手后用 --execution-thread 记录新任务编号。",
         },
       }));
       return;

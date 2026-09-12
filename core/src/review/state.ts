@@ -7,10 +7,13 @@ import { WaitSchema, waitProgress } from "./wait.js";
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/).refine(s => s !== "." && s !== "..");
 const summary = z.string().max(2400);
+const roundDelta = z.string().max(1800);
 const reviewPhase = z.enum(["PREPARING", "WAITING", "REVIEWED", "READY", "EXECUTING", "DONE", "BLOCKED", "CANCELLED"]);
 const RateLimitSchema = z.object({
   detectedAt: z.string().datetime(),
   retryAfterAt: z.string().datetime().optional(),
+  statusCode: z.enum(["429", "503"]).default("429"),
+  backoffSeconds: z.number().int().positive().max(86_400).optional(),
   attempts: z.number().int().nonnegative().safe(),
   source: z.enum(["reviewer", "codex-service", "browser", "unknown"]),
   message: z.string().max(240),
@@ -22,7 +25,8 @@ export const ReviewSessionSchema = z.object({
   reviewProvider: z.enum(REVIEW_PROVIDERS), reviewMode: z.enum(["single", "consensus"]),
   round: z.number().int().positive().safe(),
   phase: reviewPhase,
-  summary, agreements: summary.default(""), disagreements: summary.default(""), result: summary.default(""),
+  summary, previousSummary: summary.optional(), roundDelta: roundDelta.optional(),
+  agreements: summary.default(""), disagreements: summary.default(""), result: summary.default(""),
   reviewerConsensus: z.boolean(), codexConsensus: z.boolean(),
   receiptStatus: z.enum(["none", "confirmed", "unknown"]), replyReceived: z.boolean(),
   nextAction: z.string().max(500), blockedReason: summary.default(""),
@@ -36,8 +40,10 @@ export const ReviewSessionSchema = z.object({
   recoveryRequired: z.boolean().optional(),
   executionMode: z.enum(["same-thread", "handoff-required", "handoff-started"]).optional(),
   executionThreadId: id.optional(),
+  handoffRequestedAt: z.string().datetime().optional(),
   createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
   executionStartedAt: z.string().datetime().optional(),
+  executionLastReportedMinute: z.number().int().min(-1).optional(),
   verification: z.object({ selfCheck: z.literal("PASS"), pageVerify: z.enum(["PASS", "NOT_APPLICABLE"]), at: z.string().datetime() }).optional(),
 }).strict();
 export type ReviewSession = z.infer<typeof ReviewSessionSchema>;
@@ -111,29 +117,31 @@ export function canRetryRateLimit(s: ReviewSession, now = new Date()): boolean {
 
 export function markReviewRateLimited(
   s: ReviewSession,
-  input: { source: ReviewRateLimit["source"]; retryAfterSeconds?: number; message?: string; now?: Date },
+  input: { source: ReviewRateLimit["source"]; statusCode?: ReviewRateLimit["statusCode"]; retryAfterSeconds?: number; message?: string; now?: Date },
 ): ReviewSession {
   const now = input.now ?? new Date();
-  const seconds = input.retryAfterSeconds !== undefined && Number.isSafeInteger(input.retryAfterSeconds) &&
-    input.retryAfterSeconds > 0 && input.retryAfterSeconds <= 86_400 ? input.retryAfterSeconds : undefined;
-  const retryAfterAt = seconds === undefined ? undefined : new Date(now.getTime() + seconds * 1000).toISOString();
+  const statusCode = input.statusCode ?? "429";
   const attempts = (s.rateLimit?.attempts ?? 0) + 1;
+  const defaultBackoff = Math.min(statusCode === "503" ? 60 * 2 ** (attempts - 1) : 30 * 2 ** (attempts - 1), 900);
+  const suppliedSeconds = input.retryAfterSeconds !== undefined && Number.isSafeInteger(input.retryAfterSeconds) &&
+    input.retryAfterSeconds > 0 && input.retryAfterSeconds <= 86_400 ? input.retryAfterSeconds : undefined;
+  const seconds = suppliedSeconds ?? defaultBackoff;
+  const retryAfterAt = new Date(now.getTime() + seconds * 1000).toISOString();
+  const label = statusCode === "503" ? "服务暂时不可用（503）" : "评审服务暂时限流（429）";
   return {
     ...s,
     phase: "BLOCKED",
     reviewerConsensus: false,
     codexConsensus: false,
-    rateLimit: { detectedAt: now.toISOString(), retryAfterAt, attempts, source: input.source,
+    rateLimit: { detectedAt: now.toISOString(), retryAfterAt, statusCode, backoffSeconds: seconds, attempts, source: input.source,
       resumePhase: s.rateLimit?.resumePhase ?? (s.phase === "BLOCKED" ? undefined : s.phase),
       resumeNextAction: s.rateLimit?.resumeNextAction ?? (s.phase === "BLOCKED" ? undefined : s.nextAction),
       // Never persist service response text: it can contain private headers,
       // tokens, or account-specific details. The optional message is accepted
       // for API compatibility but deliberately ignored.
-      message: "评审服务暂时限流（429），已停止自动重试" },
-    blockedReason: "评审服务暂时限流（429），已停止自动重试；不会重复发送或重复创建会话。",
-    nextAction: retryAfterAt
-      ? `等待 ${retryAfterAt} 之后，再用 --retry-rate-limit 进行一次恢复检查`
-      : "服务恢复后，用 --retry-rate-limit 进行一次恢复检查；恢复前不重试",
+      message: `${label}，已停止自动重试` },
+    blockedReason: `${label}，已停止自动重试；不会重复发送或重复创建会话。`,
+    nextAction: `等待 ${retryAfterAt} 之后，再用 --retry-rate-limit 进行一次恢复检查`,
   };
 }
 
@@ -155,7 +163,8 @@ export function beginReviewExecution(
       ...s,
       executionMode: "handoff-required",
       executionThreadId: undefined,
-      nextAction: "立即在同一工作区创建普通执行任务，带上当前共识摘要；不要重新评审或等待用户再发继续",
+      handoffRequestedAt: new Date().toISOString(),
+      nextAction: "已自动发起普通执行任务接力；立即在同一工作区创建普通执行任务并接手当前共识摘要，不要重新评审或等待用户再发继续",
     };
   }
 
@@ -171,6 +180,8 @@ export function beginReviewExecution(
       executionMode: "handoff-started",
       executionThreadId: targetThreadId,
       executionStartedAt: new Date().toISOString(),
+      executionLastReportedMinute: -1,
+      handoffRequestedAt: s.handoffRequestedAt,
       nextAction: "普通执行任务已接手；Codex 修改文件、运行测试并检查页面",
     };
   }
@@ -185,19 +196,28 @@ export function beginReviewExecution(
     executionMode: "same-thread",
     executionThreadId: s.threadId,
     executionStartedAt: new Date().toISOString(),
+    executionLastReportedMinute: -1,
     nextAction: "Codex 修改文件、运行测试并检查页面",
   };
 }
 
-export function renderReview(s: ReviewSession): string {
+export function executionProgress(s: ReviewSession, now = new Date()): { message: string; minute: number; shouldReport: boolean } {
+  if (s.phase !== "EXECUTING" || !s.executionStartedAt) return { message: "尚未开始执行", minute: 0, shouldReport: false };
+  const minute = Math.max(0, Math.floor((now.getTime() - Date.parse(s.executionStartedAt)) / 60000));
+  return { message: `Codex 执行中，已进行约 ${minute} 分钟`, minute,
+    shouldReport: minute > (s.executionLastReportedMinute ?? -1) };
+}
+
+export function renderReview(s: ReviewSession, now = new Date()): string {
   const status = { PREPARING: "准备评审", WAITING: "等待网页回复", REVIEWED: "已收到评审，Codex 核对中", READY: s.executionMode === "handoff-required" ? "评审通过，正在转交正常执行任务" : "评审通过，可开始修改",
     EXECUTING: "正在修改和测试", DONE: "已完成", BLOCKED: "已暂停", CANCELLED: "已取消" }[s.phase];
   return [
     `评审渠道：${providerLabel(s.reviewProvider)}`,
     s.reviewMode === "single" ? "评审方式：单次评审" : `多轮评审：第 ${s.round} 轮`,
     `当前状态：${status}`,
-    ...(s.wait && (s.phase === "WAITING" || s.phase === "BLOCKED") ? [waitProgress(s).message] : []),
-    ...(s.rateLimit ? [`服务限流：第 ${s.rateLimit.attempts} 次（429），${s.rateLimit.retryAfterAt ? `可在 ${s.rateLimit.retryAfterAt} 后重试` : "等待服务恢复后再试"}`] : []),
+    ...(s.wait && (s.phase === "WAITING" || s.phase === "BLOCKED") ? [waitProgress(s, now).message] : []),
+    ...(s.phase === "EXECUTING" ? [executionProgress(s, now).message] : []),
+    ...(s.rateLimit ? [`${s.rateLimit.statusCode === "503" ? "服务暂时不可用" : "服务限流"}：第 ${s.rateLimit.attempts} 次（${s.rateLimit.statusCode}），等待服务恢复后再试${s.rateLimit.retryAfterAt ? `（可在 ${s.rateLimit.retryAfterAt} 后检查）` : ""}；不会重复发送`] : []),
     `实际模型：${s.modelName ?? "尚未从页面确认"} / ${s.reasoningStrength ?? "尚未确认"}`,
     `同意的地方：${s.agreements || "尚未收到"}`,
     `分歧的地方：${s.disagreements || (s.replyReceived ? "无" : "尚未确认")}`,
