@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.18.2",
+  "version": "1.18.3",
   "skills": {
     "deepseek-consensus-review": {
       "agents/openai.yaml": "0adf2365ca8c6a002f65d2ce65b43269ff4f5eccaf88c8d4dbef8454ebbb401e",
@@ -25,7 +25,7 @@
       "scripts/sync_references.ps1": "60b0059e9fb07ca26846f81576cbe1fbe7e0330890bd0aa596cd857ae0683077",
       "scripts/update_review_status.ps1": "270ef90b2dfed883e2daab5b06ad993271e3e22572904dfb63e129d434e1cc54",
       "SKILL.md": "680b2d51ee2d4091352a5f6a417c72b94e276344759e22537bb139cfe3346c75",
-      "VERSION": "0a1b17e91d514c0c9e88520e6091e2d52a6faf8296892cad7355ff0723a42914"
+      "VERSION": "971171832ee417b360496643c2ab1b02138c5fbea6bbcdb2f2d774ff85c4e77f"
     },
     "deepseek-independent-review": {
       "agents/openai.yaml": "374e0a9d7956b05d9e7e504b4e7c796a46e5f14f84868a33d3dd84aadb30eb0c",
@@ -50,7 +50,7 @@
       "scripts/sync_references.ps1": "60b0059e9fb07ca26846f81576cbe1fbe7e0330890bd0aa596cd857ae0683077",
       "scripts/update_review_status.ps1": "2728efbf6d649b57e0aeddc865cd24410f854f242549c9a466fcabb58e797d35",
       "SKILL.md": "175f40a93e072384f55c28853c6be724de03f40d9a68d88e10b19e5b92e7a8f5",
-      "VERSION": "0a1b17e91d514c0c9e88520e6091e2d52a6faf8296892cad7355ff0723a42914"
+      "VERSION": "971171832ee417b360496643c2ab1b02138c5fbea6bbcdb2f2d774ff85c4e77f"
     }
   }
 }

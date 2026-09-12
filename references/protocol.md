@@ -215,6 +215,6 @@ If status is restricted, ignore it and review from git_diff.
 
 发送证据、计时、失败判断与恢复使用唯一规则：[等待与恢复](reliability.md)。正常生成不使用两次检查或 60 秒暂停条件；页面观察不代替回执和双方共识。恢复只从同任务检查点读取，不能从全局最后一行获取执行许可。
 
-## 429 限流状态（1.18.2）
+## 429 限流状态（1.18.3）
 
 限流时记录 `detectedAt`、`attempts`、`source` 和可选的 `retryAfterAt`，状态为暂停，执行门槛关闭。恢复必须显式请求且到达 `retryAfterAt`；恢复失败再次保存限流次数。状态不保存服务原始响应、令牌或私密头。

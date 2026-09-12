@@ -1,6 +1,6 @@
 # codex-with-chatgpt Skill
 
-当前版本：`1.18.2`
+当前版本：`1.18.3`
 
 唯一仓库：<https://github.com/ssqaq/codex-with-chatgpt-skill>
 
