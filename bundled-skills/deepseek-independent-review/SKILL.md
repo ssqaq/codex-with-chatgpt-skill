@@ -246,3 +246,9 @@ $deepseek-independent-review
 - [references/call-shortcuts.md](references/call-shortcuts.md)
 - [references/status-template.md](references/status-template.md)
 - [references/general-collaboration.md](references/general-collaboration.md)
+
+## 配套更新 1.19.3
+
+按浏览器运行规则使用有界连续读取；先保存真实观察再分析，部分失败保留已有记录，错轮不计进展，不因页面完成提前取得执行共识。
+
+同一个 Task 可以多次恢复：新的故障或再次关闭的原标签按运行规则重新核对，旧回执、轮次和时间保留，不循环重发。

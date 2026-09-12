@@ -73,6 +73,7 @@ param(
     [string]$BrowserActionAt,
     [string]$BrowserActionEvidence,
     [string]$BrowserEvidenceCapturedAt,
+    [string]$ClosedTabEvidenceFile,
     [string]$MessageReadyAt,
     [ValidateSet('', 'confirmed', 'absent', 'wrong-session', 'unknown', 'empty')]
     [string]$OpenTabsEvidence = '',
@@ -2318,7 +2319,7 @@ function Invoke-FailBrowserWorkflow {
             SetProp $binding 'browserToolFailureReason' $reasonText
             SetProp $binding 'lastBrowserToolAt' (Get-Date).ToString('o')
             SetProp $binding 'browserFailureClass' $failureClass
-            $recoveryCount = (LongProp $binding 'browserRecoveryCount') + 1
+            $recoveryCount = if ((Prop $binding 'status') -eq 'bound' -and (Prop $binding 'browserRecoveryStatus') -eq 'recovered') { 1 } else { (LongProp $binding 'browserRecoveryCount') + 1 }
             $recoveryLimit = [math]::Max(1, (LongProp $binding 'browserRecoveryLimit'))
             SetProp $binding 'browserRecoveryCount' $recoveryCount
             SetProp $binding 'browserRecoveryLimit' $recoveryLimit
@@ -2451,7 +2452,7 @@ function Recover-PendingTransaction {
             SetProp $binding 'browserToolCallId' (Text (Prop $payload 'browserToolCallId'))
             SetProp $binding 'browserToolFailureReason' $reasonText
             SetProp $binding 'lastBrowserToolAt' (Get-Date).ToString('o')
-            $recoveryCount = (LongProp $binding 'browserRecoveryCount') + 1
+            $recoveryCount = if ((Prop $binding 'status') -eq 'bound' -and (Prop $binding 'browserRecoveryStatus') -eq 'recovered') { 1 } else { (LongProp $binding 'browserRecoveryCount') + 1 }
             $recoveryLimit = [math]::Max(1, (LongProp $binding 'browserRecoveryLimit'))
             SetProp $binding 'browserRecoveryCount' $recoveryCount
             SetProp $binding 'browserRecoveryLimit' $recoveryLimit
@@ -3993,8 +3994,36 @@ switch ($Action) {
             ) {
                 throw '恢复页面不是原本机会话。'
             }
-            if ((Prop $binding 'browserRecoveryStatus') -eq 'recovered' -or (LongProp $binding 'browserRecoveryCount') -gt 1 -or ((Prop $binding 'status') -eq 'bound' -and (LongProp $binding 'browserRecoveryCount') -ge 1)) {
-                throw '本任务已使用一次浏览器恢复，保留原会话并暂停，不重复恢复。'
+            $closedTabRestore = -not [string]::IsNullOrWhiteSpace($ClosedTabEvidenceFile)
+            if ($closedTabRestore) {
+                # Reopening a proven closed tab is not retrying a disconnected runtime.
+                # Preserve the runtime recovery budget. Fresh evidence must identify a different tab.
+                $e = Read-Json $ClosedTabEvidenceFile $null
+                $fingerprint = Prop $binding 'lastMessageFingerprint'
+                if ((Prop $binding 'status') -ne 'bound' -or (BoolProp $binding 'pendingReceipt') -or
+                    (BoolProp $binding 'auditRisk') -or (Prop $binding 'lastReceiptStatus') -ne 'confirmed' -or
+                    [string]::IsNullOrWhiteSpace($fingerprint)) {
+                    throw '关闭标签恢复要求原回执明确且无待确认风险。'
+                }
+                if ($null -eq $e -or (Prop $e 'source') -ne 'cua.getState' -or
+                    (Prop $e 'taskId') -ne (Text $TaskId) -or (Prop $e 'threadId') -ne (Text $CodexThreadId) -or
+                    (Prop $e 'browserSurface') -ne $TargetBrowserSurface -or
+                    (Prop $e 'oldTabId') -ne (Prop $binding 'browserTabId') -or
+                    (Text $BrowserTabId) -eq (Prop $binding 'browserTabId')) {
+                    throw '关闭标签证据不属于当前任务和原标签。'
+                }
+                try { $captured = [datetimeoffset]$e.capturedAt } catch { throw '关闭标签证据时间无效。' }
+                $age = ([datetimeoffset]::UtcNow - $captured).TotalSeconds
+                if ($age -lt 0 -or $age -gt 60) { throw '关闭标签证据必须为60秒内的实际观察。' }
+                $tabs = @($e.tabs)
+                $sameSession = @($tabs | Where-Object { (Prop $_ 'url') -eq (Text $DomTargetUrl) })
+                if (@($tabs | Where-Object { (Prop $_ 'id') -eq (Prop $binding 'browserTabId') }).Count -ne 0 -or
+                    $sameSession.Count -ne 1 -or (Prop $sameSession[0] 'id') -ne (Text $BrowserTabId)) {
+                    throw '原标签仍在、目标标签缺失或存在重复对话标签，不能恢复。'
+                }
+            }
+            elseif ((Prop $binding 'browserRecoveryStatus') -eq 'recovered' -or (LongProp $binding 'browserRecoveryCount') -gt 1 -or ((Prop $binding 'status') -eq 'bound' -and (LongProp $binding 'browserRecoveryCount') -ge 1)) {
+                throw '同一次故障已使用一次浏览器恢复，保留原会话并暂停，不重复恢复。'
             }
             if ((Prop $binding 'status') -eq 'recovery-pending') {
                 $failureAt = [datetimeoffset]::MinValue
@@ -4020,8 +4049,16 @@ switch ($Action) {
             SetProp $binding 'tabMatchCount' $TabMatchCount
             SetProp $binding 'conversationUrl' (Text $DomTargetUrl)
             SetProp $binding 'status' 'bound'
-            SetProp $binding 'browserRecoveryStatus' 'recovered'
-            SetProp $binding 'browserRecoveryCount' 1
+            if ($closedTabRestore) {
+                SetProp $binding 'lastClosedTabRestoreFingerprint' $fingerprint
+                SetProp $binding 'lastClosedTabRestoreAt' ([datetimeoffset]::UtcNow.ToString('o'))
+                SetProp $binding 'closedTabRestoreCount' ((LongProp $binding 'closedTabRestoreCount') + 1)
+            }
+            else {
+                SetProp $binding 'browserRecoveryStatus' 'recovered'
+                SetProp $binding 'browserRecoveryCount' 1
+                SetProp $binding 'browserRecoveryTotalCount' ((LongProp $binding 'browserRecoveryTotalCount') + 1)
+            }
             SetProp $binding 'browserRecoveryTaskId' (Text $TaskId)
             SetProp $binding 'browserFailureClass' ''
             SetProp $binding 'browserToolStatus' 'available'

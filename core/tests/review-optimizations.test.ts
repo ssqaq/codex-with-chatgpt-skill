@@ -12,6 +12,11 @@ function ready(overrides: Partial<ReviewSession> = {}): ReviewSession {
 }
 
 describe("多轮评审速度和状态优化", () => {
+  it("第一轮也遵循用户在摘要中要求的更短回复上限", () => {
+    const message = buildReviewMessage(ready({round: 1, summary: "检查计时方案，正文100字以内"}));
+    expect(message).toContain("正文100字以内");
+    expect(message).toContain("1800 字以内；摘要要求更短时按更短上限");
+  });
   it("后续轮次只发送新增内容和当前分歧，不重复上一轮全文", () => {
     const delta = buildRoundDelta("保留旧入口\n增加回滚测试", "保留旧入口\n增加回滚测试\n补充超时保护", "需要明确 503 的退避时间");
     expect(delta).toContain("补充超时保护");

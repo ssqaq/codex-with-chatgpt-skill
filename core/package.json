@@ -1,6 +1,6 @@
 {
   "name": "codex-with-chatgpt",
-  "version": "1.19.2",
+  "version": "1.19.3",
   "description": "ChatGPT thinks. Codex works. Use ChatGPT as the planning brain while keeping the Codex harness.",
   "type": "module",
   "license": "MIT",

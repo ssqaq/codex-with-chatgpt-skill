@@ -1,0 +1,62 @@
+{
+  "source": "real Codex in-app browser observations; no generated timestamps",
+  "date": "2026-09-12",
+  "rounds": [
+    {
+      "round": 1,
+      "stage": "plan",
+      "messageReadyAt": "2026-09-12T09:01:51.233Z",
+      "submittedAt": "2026-09-12T09:03:16.084Z",
+      "replyObservedAt": "2026-09-12T09:03:41.004Z",
+      "codexReviewedAt": "2026-09-12T09:04:08.098Z",
+      "consensusAt": null,
+      "readyToReviewedMs": 136865,
+      "verifiedToSubmitMs": 29030,
+      "observedReplyWaitMs": 24920,
+      "maxActualCheckIntervalMs": 24796
+    },
+    {
+      "round": 2,
+      "stage": "plan",
+      "messageReadyAt": "2026-09-12T09:04:09.553Z",
+      "submittedAt": "2026-09-12T09:05:04.755Z",
+      "replyObservedAt": "2026-09-12T09:05:33.758Z",
+      "codexReviewedAt": "2026-09-12T09:06:03.713Z",
+      "consensusAt": null,
+      "readyToReviewedMs": 114160,
+      "verifiedToSubmitMs": 19492,
+      "observedReplyWaitMs": 29003,
+      "maxActualCheckIntervalMs": 28980
+    },
+    {
+      "round": 3,
+      "stage": "plan",
+      "messageReadyAt": "2026-09-12T09:06:05.151Z",
+      "submittedAt": "2026-09-12T09:06:50.876Z",
+      "replyObservedAt": "2026-09-12T09:07:14.344Z",
+      "codexReviewedAt": "2026-09-12T09:07:34.311Z",
+      "consensusAt": "2026-09-12T09:07:35.327Z",
+      "readyToReviewedMs": 89160,
+      "verifiedToSubmitMs": 18569,
+      "observedReplyWaitMs": 23468,
+      "maxActualCheckIntervalMs": 23432
+    },
+    {
+      "round": 4,
+      "stage": "final",
+      "messageReadyAt": "2026-09-12T09:09:31.290Z",
+      "submittedAt": "2026-09-12T09:10:16.193Z",
+      "replyObservedAt": "2026-09-12T09:10:38.740Z",
+      "codexReviewedAt": "2026-09-12T09:11:00.285Z",
+      "consensusAt": "2026-09-12T09:11:01.216Z",
+      "readyToReviewedMs": 88995,
+      "verifiedToSubmitMs": 23128,
+      "observedReplyWaitMs": 22547,
+      "maxActualCheckIntervalMs": 22518
+    }
+  ],
+  "planElapsedMs": 344094,
+  "executionElapsedMs": 115403,
+  "finalReviewElapsedMs": 91018,
+  "totalElapsedMs": 551075
+}

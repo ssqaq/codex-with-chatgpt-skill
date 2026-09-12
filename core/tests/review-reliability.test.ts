@@ -331,6 +331,16 @@ describe("PowerShell entrypoints with synthetic browser evidence (no web sends)"
     const twice = ps("session_binding.ps1", recoverArgs);
     expect(twice.status).not.toBe(0);
     expect(twice.stderr).toContain("一次浏览器恢复");
+    // A later, independently observed failure can recover again in the same task.
+    const anotherFailure = ps("session_binding.ps1", ["-Action", "FailBrowserWorkflow", "-TaskId", s.taskId, "-CodexThreadId", s.threadId,
+      "-StateDir", dir, "-BrowserTool", "mcp__cua_repl.js", "-BrowserToolStatus", "failed", "-Reason", "Second observed disconnect after successful recovery"]);
+    expect(anotherFailure.status, anotherFailure.stderr).toBe(0);
+    expect(cli("advance").session.nextAction).toBe("auto-recover-runtime-tab");
+    const nextArgs = recoverArgs.map((v, i) => recoverArgs[i - 1] === '-RuntimeEpoch' ? '3' : recoverArgs[i - 1] === '-BrowserTabId' ? 'synthetic-tab-reloaded-again' : v);
+    const again = ps("session_binding.ps1", nextArgs);
+    expect(again.status, again.stderr).toBe(0);
+    expect(JSON.parse(fs.readFileSync(registryFile, 'utf8')).bindings[0].browserRecoveryTotalCount).toBe(2);
+    expect(cli("sync").session.phase).toBe("WAITING");
   }, 20000);
 });
 
