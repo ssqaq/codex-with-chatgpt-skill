@@ -13,6 +13,7 @@ export const WaitSchema = z.object({
 export type ReviewWait = z.infer<typeof WaitSchema>;
 export const REVIEW_IDLE_TIMEOUT_MINUTES = 10;
 export const REVIEW_IDLE_TIMEOUT_MS = REVIEW_IDLE_TIMEOUT_MINUTES * 60_000;
+export const REVIEW_CHECK_INTERVAL_MS = 30_000;
 export const ObservationSchema = z.object({
   taskId: z.string(), threadId: z.string(), round: z.number().int().positive(),
   observedAt: z.string().datetime(), observationId: z.string().min(1).max(200),
@@ -26,7 +27,7 @@ export function nextReviewCheck(s: ReviewSession, now = new Date()) {
   const w = s.wait;
   if (s.phase !== "WAITING" || !w || w.round !== s.round) return { checkAfterMs: 0, nextAction: s.nextAction };
   if (w.pageStatus === "reply-ready") return { checkAfterMs: 0, nextAction: "read-and-validate-current-reply" };
-  const interval = +now - Date.parse(w.startedAt) < 60000 ? 5000 : 15000;
+  const interval = REVIEW_CHECK_INTERVAL_MS;
   return { checkAfterMs: w.lastCheckedAt ? Math.max(0, interval - (+now - Date.parse(w.lastCheckedAt))) : 0,
     nextAction: "observe-original-page", intervalMs: interval };
 }
@@ -56,7 +57,7 @@ export function observeReview(s: ReviewSession, input: unknown, now = new Date()
   if (wait.lastCheckedAt && Date.parse(e.observedAt) <= Date.parse(wait.lastCheckedAt)) throw new Error("拒绝旧网页观察，计时未重置。");
   if (wait.lastObservationId === e.observationId) throw new Error("该网页观察已记录，不能当作新检查。");
   const changed = !!e.progressFingerprint && e.progressFingerprint !== wait.progressFingerprint;
-  const interval = wait.lastCheckedAt && Date.parse(wait.lastCheckedAt) - Date.parse(wait.startedAt) >= 60000 ? 15000 : 5000;
+  const interval = REVIEW_CHECK_INTERVAL_MS;
   const delay = wait.lastCheckedAt ? Math.max(0, Date.parse(e.observedAt) - Date.parse(wait.lastCheckedAt) - interval) : Math.max(0, Date.parse(e.observedAt) - Date.parse(wait.startedAt));
   let timed = s;
   if (e.progressFingerprint) timed = markTiming(timed, "firstReplyObservedAt", e.observedAt);

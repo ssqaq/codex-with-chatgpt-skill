@@ -35,6 +35,7 @@ param(
     [string]$ConversationUrl,
     [string]$Model,
     [string]$Reasoning,
+    [string]$SearchMode,
     [string]$SendStatus,
     [string]$RoundStatus,
     [string]$DeepSeekStatus,
@@ -130,7 +131,8 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $TargetUrlValue = 'https://chat.deepseek.com/'
-$TargetModelValue = '专家模式'
+$TargetModelValue = '网页当前模型（合并升级版）'
+$TargetSearchValue = '智能搜索'
 $TargetReasoningValue = '深度思考'
 $TargetSurfaceValue = 'codex-in-app-sidebar'
 $SchemaVersion = 7
@@ -308,7 +310,7 @@ function AssertCanonicalInputs {
     }
     if (
         -not [string]::IsNullOrWhiteSpace((Text $Model)) -and
-        (Text $Model) -ne $TargetModelValue
+        (Text $Model) -notin @($TargetModelValue, '专家模式')
     ) {
         throw '当前 Skill 只允许目标模型专家模式。'
     }
@@ -404,6 +406,8 @@ function NormalizeCurrentState([System.Collections.IDictionary]$State) {
         $State['legacyReasoning'] = $existingReasoning
     }
     $State['reasoning'] = $TargetReasoningValue
+    $State['searchMode'] = $TargetSearchValue
+    $State['searchMode'] = if ([string]::IsNullOrWhiteSpace($SearchMode)) { $TargetSearchValue } else { $SearchMode }
 
     if (
         -not [string]::IsNullOrWhiteSpace((Text $TargetUrl)) -and
@@ -433,7 +437,7 @@ function AssertStateConsistency([System.Collections.IDictionary]$State) {
     if ((Text $State['targetUrl']) -ne $TargetUrlValue) {
         throw '状态 targetUrl 不是 DeepSeek 官网。'
     }
-    if ((Text $State['model']) -ne $TargetModelValue) {
+    if ((Text $State['model']) -notin @($TargetModelValue, '专家模式')) {
         throw '状态 model 不是专家模式。'
     }
     if (
@@ -450,6 +454,9 @@ function AssertStateConsistency([System.Collections.IDictionary]$State) {
     }
     if ((Text $State['reasoning']) -ne $TargetReasoningValue) {
         throw '状态 reasoning 不是深度思考。'
+    }
+    if ((Text $State['searchMode']) -ne $TargetSearchValue) {
+        throw '状态 searchMode 不是智能搜索。'
     }
     if (
         (Text $State['browserSurface']) -notin @('', 'codex-in-app-sidebar', 'unverified-legacy-or-external')
@@ -509,8 +516,9 @@ function AssertSentConsistency([System.Collections.IDictionary]$State) {
     }
     if (
         (Prop $binding 'targetUrl') -ne $TargetUrlValue -or
-        (Prop $binding 'model') -ne $TargetModelValue -or
-        (Prop $binding 'reasoning') -ne $TargetReasoningValue
+        (Prop $binding 'model') -notin @($TargetModelValue, '专家模式') -or
+        (Prop $binding 'reasoning') -ne $TargetReasoningValue -or
+        (Prop $binding 'searchMode') -ne $TargetSearchValue
     ) {
         throw '绑定不是 DeepSeek 官网专家模式 + 深度思考。'
     }
@@ -541,8 +549,9 @@ function AssertSentConsistency([System.Collections.IDictionary]$State) {
     }
     if (
         (Text $State['targetUrl']) -ne $TargetUrlValue -or
-        (Text $State['model']) -ne $TargetModelValue -or
-        (Text $State['reasoning']) -ne $TargetReasoningValue
+        (Text $State['model']) -notin @($TargetModelValue, '专家模式') -or
+        (Text $State['reasoning']) -ne $TargetReasoningValue -or
+        (Text $State['searchMode']) -ne $TargetSearchValue
     ) {
         throw '状态没有证明使用 DeepSeek 官网专家模式 + 深度思考。'
     }

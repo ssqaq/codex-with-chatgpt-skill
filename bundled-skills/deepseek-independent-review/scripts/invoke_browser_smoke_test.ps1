@@ -60,11 +60,14 @@ if ((Prop $evidence 'surface') -ne 'codex-in-app-sidebar') {
 if (-not (Is-TargetUrl (Prop $evidence 'url'))) {
     [void]$failures.Add('页面不是 chat.deepseek.com 官网')
 }
-if ((Prop $evidence 'model') -ne '专家模式') {
+if ((Prop $evidence 'model') -notin @('网页当前模型（合并升级版）', '专家模式')) {
     [void]$failures.Add('当前模型未被真实 DOM 证据确认')
 }
 if ((Prop $evidence 'reasoning') -ne '深度思考') {
     [void]$failures.Add('深度思考未被真实 DOM 证据确认')
+}
+if ((Prop $evidence 'searchMode') -ne '智能搜索') {
+    [void]$failures.Add('智能搜索未被真实 DOM 证据确认')
 }
 if ([string]::IsNullOrWhiteSpace((Prop $evidence 'sessionId'))) {
     [void]$failures.Add('缺少官网 sessionId')

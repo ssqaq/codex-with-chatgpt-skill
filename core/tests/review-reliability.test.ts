@@ -252,16 +252,23 @@ describe("PowerShell entrypoints with synthetic browser evidence (no web sends)"
     expect(after.executionStatus).toBe("禁止修改");
     expect(after.sendAuthorization).toBe("none");
   });
-  it("real activator writes a usable checkpoint", () => {
-    const result = ps("activate_review.ps1", [...baseArgs(), "-SkillName", "deepseek-consensus-review"]);
+  it.each(["deepseek-consensus-review", "deepseek-independent-review"])("%s activator writes a usable checkpoint", name => {
+    const result = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File",
+      path.join(repo, "bundled-skills", name, "scripts/activate_review.ps1"), ...baseArgs(), "-SkillName", name],
+      { encoding: "utf8", timeout: 20000, windowsHide: true });
     expect(result.status, result.stderr).toBe(0);
     const checkpoint = JSON.parse(fs.readFileSync(path.join(dir, "task-test.checkpoint.json"), "utf8"));
-    expect(checkpoint.state.reviewBatch).toBe("C1");
+    expect(checkpoint.state.reviewBatch).toBe(name === "deepseek-independent-review" ? "R1" : "C1");
+    expect(checkpoint.state.model).toBe("网页当前模型（合并升级版）");
+    expect(checkpoint.state.searchMode).toBe("智能搜索");
     expect(checkpoint.state.taskId).toBe("task-test");
   });
-  it("runs actual prepare/confirm/receipt scripts and keeps repeated normal waits alive", () => {
+  it.each(["deepseek-consensus-review", "deepseek-independent-review"])("%s runs prepare/receipt/sync/recovery without treating normal waits as stuck", name => {
+    const bundle = path.join(repo, "bundled-skills", name);
+    const ps = (script: string, args: string[]) => spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", path.join(bundle, "scripts", script), ...args],
+      { encoding: "utf8", timeout: 20000, windowsHide: true });
     const result = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", path.join(repo, "core/tests/fixtures/review-native-smoke.ps1"),
-      "-SkillRoot", bundle, "-StateDir", dir], { encoding: "utf8", timeout: 20000, windowsHide: true });
+      "-SkillRoot", bundle, "-StateDir", dir, "-SkillName", name], { encoding: "utf8", timeout: 20000, windowsHide: true });
     expect(result.status, result.stderr + result.stdout).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
       ok: true,
@@ -275,7 +282,7 @@ describe("PowerShell entrypoints with synthetic browser evidence (no web sends)"
     });
     vi.stubEnv("C2C_DEEPSEEK_STATE_DIR", dir);
     const ws = new Workspace(dir);
-    const s = newReview({ workspaceId: ws.id, taskId: "native-smoke", threadId: "native-test-thread", reviewProvider: "deepseek", reviewMode: "consensus", summary: "Synthetic integration test" });
+    const s = newReview({ workspaceId: ws.id, taskId: "native-smoke", threadId: "native-test-thread", reviewProvider: "deepseek", reviewMode: name === "deepseek-independent-review" ? "single" : "consensus", summary: "Synthetic integration test" });
     changeReview(ws.id, s.threadId, () => s);
     const cli = (command: string) => {
       const r = spawnSync(process.execPath, ["--import", "tsx", "src/cli/index.ts", "review", command, "-w", dir, "--thread", s.threadId, "--json"],

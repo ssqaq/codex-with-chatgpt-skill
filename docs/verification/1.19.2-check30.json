@@ -1,0 +1,35 @@
+{
+  "version": "1.19.2",
+  "date": "2026-09-12",
+  "kind": "single-release-review",
+  "source": "real-in-app-browser",
+  "checkIntervalLimitMs": 30000,
+  "pageVerifiedAt": "2026-09-12T08:21:01.348Z",
+  "submittedAt": "2026-09-12T08:21:21.613Z",
+  "firstObservedAt": "2026-09-12T08:21:21.667Z",
+  "completedObservedAt": "2026-09-12T08:21:46.227Z",
+  "verifiedToSubmitMs": 20265,
+  "firstCheckDelayMs": 54,
+  "observedCheckGapMs": 24560,
+  "replyObservedWaitMs": 24614,
+  "checkGapWithinLimit": true,
+  "replyTaskRoundMatched": true,
+  "complete": true,
+  "decision": "CONSENSUS",
+  "coreAfterReply": "WAITING",
+  "coreAfterCodexReview": "READY",
+  "nativeReviewComplete": true,
+  "tests": {
+    "files": 22,
+    "passed": 402,
+    "typecheck": "PASS",
+    "build": "PASS",
+    "installation": "PASS"
+  },
+  "limitations": [
+    "One real single review; previous 4-round and 3-round results are separate.",
+    "Reviewer inspected only the supplied summary, not source files or test execution.",
+    "Earlier harness mode mismatch preserved as failure; independent bundle configuration then fixed and regression tested.",
+    "Not a hard real-time guarantee; historical timings unchanged."
+  ]
+}

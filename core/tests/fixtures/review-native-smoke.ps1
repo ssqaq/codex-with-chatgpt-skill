@@ -1,11 +1,11 @@
 # Synthetic page evidence only: exercise the real local scripts without opening a browser.
-param([string]$SkillRoot,[string]$StateDir)
+param([string]$SkillRoot,[string]$StateDir,[string]$SkillName='deepseek-consensus-review')
 $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $task='native-smoke';$thread='native-test-thread';$marker="CODEX-BINDING-$thread"
 $scripts=Join-Path $SkillRoot 'scripts'
 $base=@{TaskId=$task;CodexThreadId=$thread;StateDir=$StateDir}
-& (Join-Path $scripts 'activate_review.ps1') @base -SkillName deepseek-consensus-review | Out-Null
+& (Join-Path $scripts 'activate_review.ps1') @base -SkillName $SkillName | Out-Null
 $dom=@{EvidenceSource='dom';BrowserSurface='codex-in-app-sidebar';BrowserTabId='synthetic-tab';BrowserRuntimeId='synthetic-runtime';RuntimeEpoch=1;TabMatchCount=1;
  DomTargetUrl='https://chat.deepseek.com/';DomSessionTitle='Synthetic test';DomModel='网页当前模型（合并升级版）';DomReasoning='深度思考';DomSearch='智能搜索';DomInputPresence='present';DomInputEnabled='enabled'}
 & (Join-Path $scripts 'session_binding.ps1') @base @dom -Action BeginBootstrap -ExpectedMessageMarker $marker | Out-Null
@@ -15,7 +15,8 @@ $token=$lease.leaseToken
 if(-not $token){$token=$lease.lease.token}
 $epoch=$lease.leaseEpoch
 if(-not $epoch){$epoch=$lease.lease.leaseEpoch}
-$message="C1 synthetic test`n$marker"
+$batch=if($SkillName -eq 'deepseek-independent-review'){'R1'}else{'C1'}
+$message="$batch synthetic test`n$marker"
 $messagePath=Join-Path $StateDir 'message.txt';[IO.File]::WriteAllText($messagePath,$message,[Text.UTF8Encoding]::new($false))
 $fp=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($message))).ToLowerInvariant()
 $e=@{source='codex-in-app-browser';observationId='synthetic-fixture';capturedAt=[DateTimeOffset]::UtcNow.ToString('o');taskId=$task;codexThreadId=$thread;round=1;

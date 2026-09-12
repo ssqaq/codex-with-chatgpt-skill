@@ -46,7 +46,7 @@
 ## 正常等待只有一套规则
 
 1. 本地发送动作和网页生成分开处理：网页打不开、需要登录或本地发送失败时快速暂停；消息已发送、网页仍生成时允许继续等待。
-2. 发送后立即检查；前一分钟每 5 秒、以后每 15 秒用内置浏览器检查原页面；两次页面相同不算卡死。不要反复调用发送或推进脚本来等待答案。
+2. 发送后立即检查；两次实际检查间隔不超过 30 秒，用内置浏览器检查原页面；两次页面相同不算卡死。不要反复调用发送或推进脚本来等待答案。
 3. 首次同步优先采用已核验回执中的实际发送时刻作为起点；旧记录没有发送时刻时，从首次确认等待计时；重启、读取状态、恢复都不重置。新轮次才重新计时。
 4. 每次页面检查后，使用 `c2c review observe --evidence <观察文件> -w <工作区> --thread <任务号>` 保存观察。观察文件字段为 `taskId, threadId, round, observedAt, observationId, source=codex-in-app-browser, conversationUrl, status`；status 为 `thinking|reply-ready|unavailable|login-required`。观察中的 `progressFingerprint` 可填写当前回复内容的 SHA256；按钮动画和时钟变化不算内容进展。
 5. 调用 `c2c review heartbeat --json -w <工作区> --thread <任务号>`。`shouldReport=true` 时，将返回的 message 用 commentary 回显。每满一分钟产生一次新回显，同一分钟不重复刷屏。它只算时间，不操作浏览器，也不是独立常驻程序：Codex 正在运行任务时持续执行检查循环，Codex 停止运行后不能承诺继续发消息。

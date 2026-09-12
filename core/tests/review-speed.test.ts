@@ -23,12 +23,14 @@ function reply() {
   return { ...e, role: "assistant", complete: true, messageFingerprint: "message-hash", replyFingerprint: createHash("sha256").update(text).digest("hex"), text };
 }
 describe("reply polling and measured timings", () => {
-  it("checks immediately then 5s/15s, and never waits again after a complete reply", () => {
+  it("checks immediately then within 30s, and never waits again after a complete reply", () => {
     expect(nextReviewCheck(waiting(), start).checkAfterMs).toBe(0);
     const s = observeReview(waiting(), observation(1), at(1));
-    expect(nextReviewCheck(s, at(2)).checkAfterMs).toBe(4000);
+    expect(nextReviewCheck(s, at(2))).toMatchObject({ checkAfterMs: 29000, intervalMs: 30000 });
+    expect(nextReviewCheck(s, at(31)).checkAfterMs).toBe(0);
+    expect(nextReviewCheck(s, at(40)).checkAfterMs).toBe(0);
     const late = observeReview(s, observation(61), at(61));
-    expect(nextReviewCheck(late, at(62)).checkAfterMs).toBe(14000);
+    expect(nextReviewCheck(late, at(62)).checkAfterMs).toBe(29000);
     const done = observeReview(late, { ...observation(62), status: "reply-ready" }, at(62));
     expect(nextReviewCheck(done, at(62)).nextAction).toBe("read-and-validate-current-reply");
     expect(done.reviewerConsensus).toBe(false);
@@ -36,12 +38,27 @@ describe("reply polling and measured timings", () => {
   it("keeps actual milestones across reload, reports missing data and polling delay", () => {
     let s = markTiming(waiting(), "messageReadyAt", at(-2).toISOString());
     s = observeReview(s, { ...observation(1), progressFingerprint: "a".repeat(64) }, at(1));
-    s = observeReview(s, { ...observation(25), status: "reply-ready" }, at(25));
+    s = observeReview(s, { ...observation(45), status: "reply-ready" }, at(45));
     s = ReviewSessionSchema.parse(JSON.parse(JSON.stringify(s)));
     const again = markTiming(s, "submittedAt", at(55).toISOString());
     expect(again.timings![0].submittedAt).toBe(start.toISOString());
-    expect(again.wait!.maxObservationDelayMs).toBe(19000);
-    expect(timingSummary(again, at(60)).rounds[0]).toMatchObject({ observedReplyWaitMs: 25000, preparationToSubmitMs: 2000, codexReviewMs: null });
+    expect(again.wait!.maxObservationDelayMs).toBe(14000);
+    expect(timingSummary(again, at(60)).rounds[0]).toMatchObject({ observedReplyWaitMs: 45000, preparationToSubmitMs: 2000, codexReviewMs: null });
+  });
+  it.each([[29.999, 0], [30, 0], [30.001, 1], [45, 15000]])("records the actual overrun for a %ss gap", (gap, delay) => {
+    const s = observeReview(waiting(), observation(0), at(0));
+    const checked = observeReview(s, observation(gap), at(gap));
+    expect(checked.wait!.maxObservationDelayMs).toBe(delay);
+    expect(timingSummary(checked, at(gap)).rounds[0].maxObservationDelayMs).toBe(delay);
+    expect(checked.reviewerConsensus).toBe(false);
+  });
+  it("counts command time and reload against the original check deadline", () => {
+    const checked = observeReview(waiting(), observation(1), at(1));
+    const restored = ReviewSessionSchema.parse(JSON.parse(JSON.stringify(checked)));
+    expect(nextReviewCheck(restored, at(21)).checkAfterMs).toBe(10000);
+    expect(nextReviewCheck(restored, at(31)).checkAfterMs).toBe(0);
+    expect(nextReviewCheck(restored, at(91)).checkAfterMs).toBe(0);
+    expect(restored.wait!.lastCheckedAt).toBe(at(1).toISOString());
   });
   it("does not invent a send timestamp for a legacy record", () => {
     const s = waiting();

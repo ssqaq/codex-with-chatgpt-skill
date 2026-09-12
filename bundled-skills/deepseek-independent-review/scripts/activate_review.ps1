@@ -52,7 +52,8 @@ $stateJson = & $statusScript `
     -ActivationStatus activated `
     -ActivationEvidence 'activate_review.ps1 幂等激活' `
     -TargetUrl 'https://chat.deepseek.com/' `
-    -Model '专家模式' `
+    -Model '网页当前模型（合并升级版）' `
+    -SearchMode '智能搜索' `
     -Reasoning '深度思考' `
     -SendAuthorization workflow-authorized `
     -AuthorizationScope '本次 DeepSeek 评审流程' `
