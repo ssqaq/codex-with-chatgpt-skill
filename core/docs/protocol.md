@@ -71,10 +71,13 @@ Keep messages < 1 KB. No diffs, no logs, no file bodies.
 The C2C protocol does not require the Codex client to be in its UI plan mode.
 If the client displays a raw `<proposed_plan>` wrapper or produces only plan-mode
 output for two consecutive checks, Codex must preserve the current summary,
-workspace, connector, and history, then continue in a normal execution task. If
-the current task cannot switch, send a HANDOFF to a normal task in the same
-workspace and with the same connector. Never edit Codex SQLite/JSONL history and
-never wait for the user to toggle a top-bar mode button.
+workspace, connector, and history. Run `c2c review execute --plan-mode-detected
+--json`, then use the Codex task tool to create a normal execution task in the
+same workspace and send a HANDOFF. Record the real replacement id with `c2c
+review execute --thread <source> --execution-thread <replacement>`. When the user
+already requested automatic execution after consensus, do not ask again and do
+not wait for another "continue". Never edit Codex SQLite/JSONL history, never
+rerun the review, and never wait for the user to toggle a top-bar mode button.
 
 If the client rejects the normal-task creation, fork, or mode-switch operation,
 stop waiting immediately and report `BLOCKED` with reason
@@ -480,3 +483,7 @@ no 40-step epics. Use C2C control messages.
 ## 多轮评审等待与恢复（1.18.0）
 
 发送证据、计时、失败判断与恢复使用唯一规则：[等待与恢复](../../references/reliability.md)。正常生成不使用两次检查或 60 秒暂停条件；页面观察不代替回执和双方共识。恢复只从同任务检查点读取，不能从全局最后一行获取执行许可。
+
+## 429 限流状态（1.18.2）
+
+评审服务返回 429 时，Codex 保存限流检查点并暂停当前轮次。默认不重试；显式恢复且到达恢复时间后只检查一次。不会重复发送、重复建会话或在共识前修改文件。

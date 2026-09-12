@@ -263,7 +263,16 @@ describe("PowerShell entrypoints with synthetic browser evidence (no web sends)"
     const result = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", path.join(repo, "core/tests/fixtures/review-native-smoke.ps1"),
       "-SkillRoot", bundle, "-StateDir", dir], { encoding: "utf8", timeout: 20000, windowsHide: true });
     expect(result.status, result.stderr + result.stdout).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, synthetic: true, receiptConfirmed: true, checkpointExists: true });
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      synthetic: true,
+      receiptConfirmed: true,
+      acquireRecoveredUniqueTab: true,
+      releaseRecoveredSurface: true,
+      wrongAcquireRejected: true,
+      wrongReleaseRejected: true,
+      checkpointExists: true,
+    });
     vi.stubEnv("C2C_DEEPSEEK_STATE_DIR", dir);
     const ws = new Workspace(dir);
     const s = newReview({ workspaceId: ws.id, taskId: "native-smoke", threadId: "native-test-thread", reviewProvider: "deepseek", reviewMode: "consensus", summary: "Synthetic integration test" });

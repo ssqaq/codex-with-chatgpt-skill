@@ -2065,7 +2065,8 @@ function Assert-Lease(
     [string]$Token,
     [long]$Epoch,
     [string]$Runtime,
-    [long]$RuntimeEpochExpected
+    [long]$RuntimeEpochExpected,
+    [switch]$AllowOmittedBrowserSurface
 ) {
     $lease = Get-Lease
     if ($null -eq $lease -or (LeaseExpired $lease)) {
@@ -2077,9 +2078,11 @@ function Assert-Lease(
     ) {
         throw '浏览器 lease 不属于当前任务。'
     }
+    $presentedSurface = Text $BrowserSurface
     if (
         (Prop $lease 'browserSurface') -ne $TargetBrowserSurface -or
-        (Text $BrowserSurface) -ne $TargetBrowserSurface
+        ((-not $AllowOmittedBrowserSurface) -and $presentedSurface -ne $TargetBrowserSurface) -or
+        ($AllowOmittedBrowserSurface -and -not [string]::IsNullOrWhiteSpace($presentedSurface) -and $presentedSurface -ne $TargetBrowserSurface)
     ) {
         throw '浏览器 lease 不是 Codex 右侧栏创建的。'
     }
@@ -4352,7 +4355,6 @@ switch ($Action) {
 
     'AcquireBrowserLease' {
         Require-Activation | Out-Null
-        Assert-Tab
         $bindings = Get-Bindings
         $binding = Current-Binding $bindings
         if (
@@ -4361,6 +4363,24 @@ switch ($Action) {
         ) {
             throw '当前 thread 没有可用 DeepSeek 官网会话。'
         }
+
+        # Acquire happens before the next fresh DOM verification. If only the
+        # count was omitted, reuse it solely from this exact bound tab/runtime.
+        if ($TabMatchCount -eq -1) {
+            $sameBoundBrowser = (
+                (Prop $binding 'browserSurface') -eq $TargetBrowserSurface -and
+                (Prop $binding 'browserTabId') -eq (Text $BrowserTabId) -and
+                (Prop $binding 'browserRuntimeId') -eq (Text $BrowserRuntimeId) -and
+                (LongProp $binding 'runtimeEpoch') -eq $RuntimeEpoch -and
+                (Prop $binding 'evidenceSource') -eq 'dom' -and
+                (LongProp $binding 'tabMatchCount') -eq 1
+            )
+            if (-not $sameBoundBrowser) {
+                throw 'AcquireBrowserLease 缺少唯一标签数量，且当前绑定不能安全补齐。'
+            }
+            $TabMatchCount = 1
+        }
+        Assert-Tab
         Assert-Binding $binding
         if (
             (ActiveTask $binding) -ne (Text $TaskId) -or
@@ -4445,7 +4465,7 @@ switch ($Action) {
                 Result @{ status = 'lease-already-free' } | ConvertTo-Json -Depth 20
                 return
             }
-            Assert-Lease (Prop $lease 'browserTabId') $LeaseToken $LeaseEpoch $BrowserRuntimeId $RuntimeEpoch
+            Assert-Lease (Prop $lease 'browserTabId') $LeaseToken $LeaseEpoch $BrowserRuntimeId $RuntimeEpoch -AllowOmittedBrowserSurface
             Remove-LeaseFiles
             Result @{ status = 'lease-released' } | ConvertTo-Json -Depth 20
         }

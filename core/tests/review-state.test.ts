@@ -8,9 +8,13 @@ import {
   selectReviewer,
 } from "../src/review/provider.js";
 import {
+  beginReviewExecution,
+  canRetryRateLimit,
   canExecuteReview,
   changeReview,
+  clearReviewRateLimit,
   isReviewTerminal,
+  markReviewRateLimited,
   newReview,
   readReview,
   renderReview,
@@ -182,6 +186,41 @@ describe("review execution gate and visible status", () => {
     expect(output).toContain("发送结果不明确，不能重复发送。");
     expect(output).toContain("执行门槛：不允许开始修改");
   });
+
+  it("starts execution in the same task when it is not stuck in plan mode", () => {
+    const next = beginReviewExecution(readyReview());
+    expect(next.phase).toBe("EXECUTING");
+    expect(next.executionMode).toBe("same-thread");
+    expect(next.executionThreadId).toBe("thread-1");
+    expect(next.executionStartedAt).toBeTruthy();
+  });
+
+  it("keeps the gate open but requires an immediate handoff when plan mode is detected", () => {
+    const prepared = beginReviewExecution(readyReview(), { planModeDetected: true });
+    expect(prepared.phase).toBe("READY");
+    expect(prepared.executionMode).toBe("handoff-required");
+    expect(prepared.executionThreadId).toBeUndefined();
+    expect(prepared.nextAction).toContain("立即在同一工作区创建普通执行任务");
+    expect(canExecuteReview(prepared)).toBe(false);
+    expect(renderReview(prepared)).toContain("共识已通过，等待正常执行任务接手");
+
+    expect(() => beginReviewExecution(prepared)).toThrow(/提供真实的新任务编号/);
+
+    const started = beginReviewExecution(prepared, { executionThreadId: "thread-execution" });
+    expect(started.phase).toBe("EXECUTING");
+    expect(started.executionMode).toBe("handoff-started");
+    expect(started.executionThreadId).toBe("thread-execution");
+    expect(renderReview(started)).toContain("执行任务：thread-execution");
+  });
+
+  it("rejects an invented handoff target or a handoff before plan-mode detection", () => {
+    expect(() => beginReviewExecution(readyReview(), { executionThreadId: "thread-execution" }))
+      .toThrow(/没有记录计划模式阻塞/);
+    expect(() => beginReviewExecution(readyReview(), { planModeDetected: true, executionThreadId: "thread-1" }))
+      .toThrow(/新的任务编号/);
+    expect(() => beginReviewExecution(readyReview(), { planModeDetected: true, executionThreadId: "../other" }))
+      .toThrow();
+  });
 });
 
 describe("persisted review ownership and recovery", () => {
@@ -258,6 +297,30 @@ describe("persisted review ownership and recovery", () => {
     expect(() => changeReview(state.workspaceId, state.threadId, () => makeReview({ taskId: "review-2" })))
       .toThrow(/completed or cancelled/);
     expect(readReview(state.workspaceId, state.threadId)).toEqual(state);
+  });
+
+  it("pauses on reviewer rate limits and requires one explicit, timed recovery", () => {
+    const ready = readyReview({ phase: "READY", nextAction: "发送本轮评审" });
+    const detectedAt = new Date("2026-09-12T00:00:00.000Z");
+    const blocked = markReviewRateLimited(ready, { source: "reviewer", retryAfterSeconds: 60, now: detectedAt });
+    expect(blocked.phase).toBe("BLOCKED");
+    expect(blocked.rateLimit).toMatchObject({ attempts: 1, source: "reviewer", retryAfterAt: "2026-09-12T00:01:00.000Z" });
+    expect(blocked.blockedReason).toContain("429");
+    expect(canExecuteReview(blocked)).toBe(false);
+    expect(canRetryRateLimit(blocked, new Date("2026-09-12T00:00:59.000Z"))).toBe(false);
+    expect(canRetryRateLimit(blocked, new Date("2026-09-12T00:01:00.000Z"))).toBe(true);
+    const resumed = clearReviewRateLimit(blocked);
+    expect(resumed.rateLimit).toBeUndefined();
+    expect(resumed.phase).toBe("READY");
+    expect(resumed.nextAction).toBe("发送本轮评审");
+  });
+
+  it("renders the rate-limit pause without exposing private response data", () => {
+    const blocked = markReviewRateLimited(readyReview(), { source: "codex-service", message: "429 private-token", now: new Date("2026-09-12T00:00:00.000Z") });
+    const output = renderReview(blocked);
+    expect(output).toContain("服务限流：第 1 次（429）");
+    expect(output).toContain("等待服务恢复后再试");
+    expect(output).not.toContain("private-token");
   });
 
   it.each(["DONE", "CANCELLED"] as const)("archives the previous %s task before a new one", phase => {

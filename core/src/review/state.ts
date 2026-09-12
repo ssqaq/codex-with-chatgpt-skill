@@ -7,11 +7,21 @@ import { WaitSchema, waitProgress } from "./wait.js";
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/).refine(s => s !== "." && s !== "..");
 const summary = z.string().max(2400);
+const reviewPhase = z.enum(["PREPARING", "WAITING", "REVIEWED", "READY", "EXECUTING", "DONE", "BLOCKED", "CANCELLED"]);
+const RateLimitSchema = z.object({
+  detectedAt: z.string().datetime(),
+  retryAfterAt: z.string().datetime().optional(),
+  attempts: z.number().int().nonnegative().safe(),
+  source: z.enum(["reviewer", "codex-service", "browser", "unknown"]),
+  message: z.string().max(240),
+  resumePhase: reviewPhase.optional(),
+  resumeNextAction: z.string().max(500).optional(),
+}).strict();
 export const ReviewSessionSchema = z.object({
   schemaVersion: z.literal(1), workspaceId: id, threadId: id, taskId: id,
   reviewProvider: z.enum(REVIEW_PROVIDERS), reviewMode: z.enum(["single", "consensus"]),
   round: z.number().int().positive().safe(),
-  phase: z.enum(["PREPARING", "WAITING", "REVIEWED", "READY", "EXECUTING", "DONE", "BLOCKED", "CANCELLED"]),
+  phase: reviewPhase,
   summary, agreements: summary.default(""), disagreements: summary.default(""), result: summary.default(""),
   reviewerConsensus: z.boolean(), codexConsensus: z.boolean(),
   receiptStatus: z.enum(["none", "confirmed", "unknown"]), replyReceived: z.boolean(),
@@ -22,12 +32,16 @@ export const ReviewSessionSchema = z.object({
   evidenceFingerprint: z.string().max(256).optional(),
   evidenceRound: z.number().int().positive().safe().optional(),
   wait: WaitSchema.optional(),
+  rateLimit: RateLimitSchema.optional(),
   recoveryRequired: z.boolean().optional(),
+  executionMode: z.enum(["same-thread", "handoff-required", "handoff-started"]).optional(),
+  executionThreadId: id.optional(),
   createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
   executionStartedAt: z.string().datetime().optional(),
   verification: z.object({ selfCheck: z.literal("PASS"), pageVerify: z.enum(["PASS", "NOT_APPLICABLE"]), at: z.string().datetime() }).optional(),
 }).strict();
 export type ReviewSession = z.infer<typeof ReviewSessionSchema>;
+export type ReviewRateLimit = z.infer<typeof RateLimitSchema>;
 export const isReviewTerminal = (s: ReviewSession): boolean => s.phase === "DONE" || s.phase === "CANCELLED";
 
 export function reviewFile(workspaceId: string, threadId: string): string {
@@ -78,25 +92,119 @@ export function newReview(input: { workspaceId: string; threadId: string; taskId
   });
 }
 
-export function canExecuteReview(s: ReviewSession): boolean {
+function hasExecutionConsensus(s: ReviewSession): boolean {
   return !s.recoveryRequired && s.phase === "READY" && s.replyReceived && s.receiptStatus === "confirmed" &&
-    s.codexConsensus && s.reviewerConsensus && !s.disagreements && !s.blockedReason;
+    s.codexConsensus && s.reviewerConsensus && !s.disagreements && !s.blockedReason && !s.rateLimit;
+}
+
+export function canExecuteReview(s: ReviewSession): boolean {
+  return hasExecutionConsensus(s) && s.executionMode !== "handoff-required";
+}
+
+/** A retry is never automatic. The caller must request one explicitly; a server-provided
+ * Retry-After deadline, when present, must also have elapsed. */
+export function canRetryRateLimit(s: ReviewSession, now = new Date()): boolean {
+  if (!s.rateLimit) return true;
+  if (!s.rateLimit.retryAfterAt) return true;
+  return Date.parse(s.rateLimit.retryAfterAt) <= now.getTime();
+}
+
+export function markReviewRateLimited(
+  s: ReviewSession,
+  input: { source: ReviewRateLimit["source"]; retryAfterSeconds?: number; message?: string; now?: Date },
+): ReviewSession {
+  const now = input.now ?? new Date();
+  const seconds = input.retryAfterSeconds !== undefined && Number.isSafeInteger(input.retryAfterSeconds) &&
+    input.retryAfterSeconds > 0 && input.retryAfterSeconds <= 86_400 ? input.retryAfterSeconds : undefined;
+  const retryAfterAt = seconds === undefined ? undefined : new Date(now.getTime() + seconds * 1000).toISOString();
+  const attempts = (s.rateLimit?.attempts ?? 0) + 1;
+  return {
+    ...s,
+    phase: "BLOCKED",
+    reviewerConsensus: false,
+    codexConsensus: false,
+    rateLimit: { detectedAt: now.toISOString(), retryAfterAt, attempts, source: input.source,
+      resumePhase: s.rateLimit?.resumePhase ?? (s.phase === "BLOCKED" ? undefined : s.phase),
+      resumeNextAction: s.rateLimit?.resumeNextAction ?? (s.phase === "BLOCKED" ? undefined : s.nextAction),
+      // Never persist service response text: it can contain private headers,
+      // tokens, or account-specific details. The optional message is accepted
+      // for API compatibility but deliberately ignored.
+      message: "评审服务暂时限流（429），已停止自动重试" },
+    blockedReason: "评审服务暂时限流（429），已停止自动重试；不会重复发送或重复创建会话。",
+    nextAction: retryAfterAt
+      ? `等待 ${retryAfterAt} 之后，再用 --retry-rate-limit 进行一次恢复检查`
+      : "服务恢复后，用 --retry-rate-limit 进行一次恢复检查；恢复前不重试",
+  };
+}
+
+export function clearReviewRateLimit(s: ReviewSession, nextAction?: string): ReviewSession {
+  const resumePhase = s.rateLimit?.resumePhase;
+  return { ...s, rateLimit: undefined, phase: resumePhase && !["DONE", "CANCELLED"].includes(resumePhase) ? resumePhase : s.phase,
+    blockedReason: "", nextAction: nextAction ?? s.rateLimit?.resumeNextAction ?? s.nextAction };
+}
+
+export function beginReviewExecution(
+  s: ReviewSession,
+  input: { planModeDetected?: boolean; executionThreadId?: string } = {}
+): ReviewSession {
+  if (!hasExecutionConsensus(s)) throw new Error("尚未收到完整评审并通过双方核对，禁止开始修改。");
+  const targetThreadId = input.executionThreadId?.trim();
+
+  if (input.planModeDetected && !targetThreadId) {
+    return {
+      ...s,
+      executionMode: "handoff-required",
+      executionThreadId: undefined,
+      nextAction: "立即在同一工作区创建普通执行任务，带上当前共识摘要；不要重新评审或等待用户再发继续",
+    };
+  }
+
+  if (targetThreadId) {
+    id.parse(targetThreadId);
+    if (targetThreadId === s.threadId) throw new Error("正常执行任务必须使用新的任务编号，不能仍指向只做计划方案的原任务。");
+    if (s.executionMode !== "handoff-required" && !input.planModeDetected) {
+      throw new Error("当前评审没有记录计划模式阻塞，不能跳过转交准备。");
+    }
+    return {
+      ...s,
+      phase: "EXECUTING",
+      executionMode: "handoff-started",
+      executionThreadId: targetThreadId,
+      executionStartedAt: new Date().toISOString(),
+      nextAction: "普通执行任务已接手；Codex 修改文件、运行测试并检查页面",
+    };
+  }
+
+  if (s.executionMode === "handoff-required") {
+    throw new Error("当前任务只能出方案，必须先创建普通执行任务并提供真实的新任务编号。");
+  }
+
+  return {
+    ...s,
+    phase: "EXECUTING",
+    executionMode: "same-thread",
+    executionThreadId: s.threadId,
+    executionStartedAt: new Date().toISOString(),
+    nextAction: "Codex 修改文件、运行测试并检查页面",
+  };
 }
 
 export function renderReview(s: ReviewSession): string {
-  const status = { PREPARING: "准备评审", WAITING: "等待网页回复", REVIEWED: "已收到评审，Codex 核对中", READY: "评审通过，可开始修改",
+  const status = { PREPARING: "准备评审", WAITING: "等待网页回复", REVIEWED: "已收到评审，Codex 核对中", READY: s.executionMode === "handoff-required" ? "评审通过，正在转交正常执行任务" : "评审通过，可开始修改",
     EXECUTING: "正在修改和测试", DONE: "已完成", BLOCKED: "已暂停", CANCELLED: "已取消" }[s.phase];
   return [
     `评审渠道：${providerLabel(s.reviewProvider)}`,
     s.reviewMode === "single" ? "评审方式：单次评审" : `多轮评审：第 ${s.round} 轮`,
     `当前状态：${status}`,
     ...(s.wait && (s.phase === "WAITING" || s.phase === "BLOCKED") ? [waitProgress(s).message] : []),
+    ...(s.rateLimit ? [`服务限流：第 ${s.rateLimit.attempts} 次（429），${s.rateLimit.retryAfterAt ? `可在 ${s.rateLimit.retryAfterAt} 后重试` : "等待服务恢复后再试"}`] : []),
     `实际模型：${s.modelName ?? "尚未从页面确认"} / ${s.reasoningStrength ?? "尚未确认"}`,
     `同意的地方：${s.agreements || "尚未收到"}`,
     `分歧的地方：${s.disagreements || (s.replyReceived ? "无" : "尚未确认")}`,
     `评审结果：${s.result || "尚未收到完整回复"}`,
     ...(s.blockedReason ? [`原因：${s.blockedReason}`] : []),
-    `执行门槛：${canExecuteReview(s) ? "允许修改" : s.phase === "EXECUTING" ? "修改中，尚未验收" : s.phase === "DONE" ? "已验收" : "不允许开始修改"}`,
+    `执行门槛：${s.executionMode === "handoff-required" ? "共识已通过，等待正常执行任务接手" : canExecuteReview(s) ? "允许修改" : s.phase === "EXECUTING" ? "修改中，尚未验收" : s.phase === "DONE" ? "已验收" : "不允许开始修改"}`,
+    ...(s.executionMode === "handoff-started" && s.executionThreadId ? [`执行任务：${s.executionThreadId}`] : []),
     `下一步：${s.nextAction}`,
   ].join("\n");
 }

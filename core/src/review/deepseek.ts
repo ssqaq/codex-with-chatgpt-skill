@@ -10,6 +10,32 @@ import { createHash } from "node:crypto";
 
 const execFileAsync = promisify(execFile);
 export const deepseekSkillName = (mode: ReviewMode): string => mode === "single" ? "deepseek-independent-review" : "deepseek-consensus-review";
+export class ReviewRateLimitError extends Error {
+  readonly retryAfterSeconds?: number;
+  readonly source: "reviewer" | "codex-service" | "browser" | "unknown";
+  constructor(source: ReviewRateLimitError["source"], retryAfterSeconds?: number) {
+    super("评审服务暂时限流（429），已停止自动重试");
+    this.name = "ReviewRateLimitError";
+    this.source = source;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+function rateLimitDetails(error: unknown): { source: ReviewRateLimitError["source"]; retryAfterSeconds?: number } | null {
+  if (error instanceof ReviewRateLimitError) return { source: error.source, retryAfterSeconds: error.retryAfterSeconds };
+  if (!error || typeof error !== "object") return null;
+  const candidate = error as Record<string, unknown>;
+  const fields = [candidate.message, candidate.code, candidate.status, candidate.statusCode, candidate.stderr, candidate.stdout]
+    .filter(v => typeof v === "string" || typeof v === "number")
+    .map(String).join(" ");
+  if (!/(?:\b429\b|too\s+many\s+requests|rate[_ -]?limit|rate[_ -]?limited|限流)/i.test(fields)) return null;
+  const retryRaw = candidate.retryAfterSeconds ?? candidate.retryAfter ?? candidate.retry_after;
+  const retryText = typeof retryRaw === "number" || typeof retryRaw === "string" ? String(retryRaw) : fields.match(/retry[- ]?after\D{0,12}(\d{1,5})/i)?.[1];
+  const parsed = retryText && /^\d{1,5}$/.test(retryText) ? Number(retryText) : undefined;
+  const retryAfterSeconds = parsed !== undefined && Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 86_400 ? parsed : undefined;
+  const source = /codex|mcp|function_call|tool/i.test(fields) ? "codex-service" : /browser|页面|网页/i.test(fields) ? "browser" : "reviewer";
+  return { source, retryAfterSeconds };
+}
 export function deepseekStateDir(): string {
   return path.resolve(process.env.C2C_DEEPSEEK_STATE_DIR ?? path.join(os.homedir(), ".codex", "deepseek-review-state"));
 }
@@ -56,9 +82,14 @@ export async function runDeepseek(s: ReviewSession, action: "activate" | "advanc
   if (operation === "complete") args.push("-Action", "CompleteTask", "-Reason", "Codex 已完成修改、测试和复核");
   try {
     const r = await execFileAsync("pwsh", args, { encoding: "utf8", windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 });
-    return JSON.parse(r.stdout.replace(/^\uFEFF/, ""));
+    const result: unknown = JSON.parse(r.stdout.replace(/^\uFEFF/, ""));
+    const limited = rateLimitDetails(result);
+    if (limited) throw new ReviewRateLimitError(limited.source, limited.retryAfterSeconds);
+    return object(result) ? result : { status: "completed-without-details" };
   } catch (e) {
     // Never leak script stdout, lease token, auth proof, or user payload via errors.
+    const limited = rateLimitDetails(e);
+    if (limited) throw new ReviewRateLimitError(limited.source, limited.retryAfterSeconds);
     const error = e as NodeJS.ErrnoException & { killed?: boolean };
     throw new Error(error.code === "ENOENT" ? "DeepSeek 依赖 PowerShell 7 (pwsh)，当前不可用；未发送。" :
       error.killed ? "DeepSeek 本地流程超过 15 秒，状态未确认；先检查原任务，禁止重复发送。" : "DeepSeek 专用脚本执行失败；保留原任务，按专用 Skill 检查状态，未认定发送成功。");

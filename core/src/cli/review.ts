@@ -4,13 +4,13 @@ import fs from "node:fs";
 import { readUiPrefs } from "../config/ui-prefs.js";
 import { Workspace } from "../workspace/manager.js";
 import { mergeSession, readSession, sessionFile, writeSession } from "../session/state.js";
-import { deepseekDependency, readDeepseek, runDeepseek } from "../review/deepseek.js";
+import { deepseekDependency, readDeepseek, ReviewRateLimitError, runDeepseek } from "../review/deepseek.js";
 import { parseReviewMode, selectReviewer } from "../review/provider.js";
-import { canExecuteReview, changeReview, isReviewTerminal, newReview, readReview, recoverReview, renderReview, type ReviewSession } from "../review/state.js";
+import { beginReviewExecution, canExecuteReview, changeReview, clearReviewRateLimit, isReviewTerminal, markReviewRateLimited, newReview, readReview, recoverReview, renderReview, canRetryRateLimit, type ReviewSession } from "../review/state.js";
 import { buildReviewMessage } from "../review/message.js";
 import { observeReview, trackWait, waitProgress } from "../review/wait.js";
 
-type Options = { workspace?: string; thread?: string; json?: boolean; provider?: string; request?: string; mode?: string; task?: string; summary?: string; selfCheck?: string; pageVerify?: string; evidence?: string };
+type Options = { workspace?: string; thread?: string; json?: boolean; provider?: string; request?: string; mode?: string; task?: string; summary?: string; selfCheck?: string; pageVerify?: string; evidence?: string; planModeDetected?: boolean; executionThread?: string; retryRateLimit?: boolean };
 function context(opts: Options): { workspaceId: string; threadId: string } {
   const ws = new Workspace(opts.workspace ?? process.cwd());
   const threadId = (opts.thread ?? process.env.CODEX_THREAD_ID ?? "").replace(/^codex:\/\/threads\//, "").trim();
@@ -164,24 +164,34 @@ export function registerReviewCommands(program: Command): void {
   action(command("sync", "从专用 Skill 读取真实绑定与评审结果"), opts => {
     const s = current(opts); output(save(s, refresh(s)), opts);
   });
-  action(command("advance", "推进专用 Skill 的下一步，网页仍由内置浏览器操作"), async opts => {
+  action(command("advance", "推进专用 Skill 的下一步，网页仍由内置浏览器操作")
+    .option("--retry-rate-limit", "限流后到达恢复时间时，只恢复检查一次", false), async opts => {
     const s = current(opts);
     if (isReviewTerminal(s)) { output(s, opts); return; }
     if (s.reviewProvider === "chatgpt") { output(save(s, refresh(s)), opts); return; }
+    // 429/限流是持久暂停信号：默认只读，不轮询、不重发。只有显式
+    // --retry-rate-limit 且 Retry-After 已到，才允许恢复检查一次。
+    if (s.rateLimit && !opts.retryRateLimit) { output(s, opts); return; }
+    if (s.rateLimit && !canRetryRateLimit(s)) { output(s, opts); return; }
+    const working = s.rateLimit ? clearReviewRateLimit(s) : s;
     try {
-      let synced = refresh(s);
+      let synced = refresh(working);
       if (synced.phase === "WAITING" || synced.wait && synced.phase === "BLOCKED") {
         output(save(s, synced), opts); return;
       }
       if (synced.nextAction === "activate-deepseek-skill") {
-        await runDeepseek(s, "activate");
+        await runDeepseek(working, "activate");
       }
-      const result = await runDeepseek(s, "advance");
-      synced = refresh(s);
+      const result = await runDeepseek(working, "advance");
+      synced = refresh(working);
       if (typeof result.nextAction === "string") synced.nextAction = result.nextAction;
       if (result.status === "workflow-timeout") { synced.phase = "BLOCKED"; synced.blockedReason = "浏览器动作超时，停止重复推进；按原 Skill 的失败流程处理。"; }
       output(save(s, synced), opts);
     } catch (error) {
+      if (error instanceof ReviewRateLimitError) {
+        const blocked = markReviewRateLimited(s, { source: error.source, retryAfterSeconds: error.retryAfterSeconds });
+        output(save(s, blocked), opts); process.exitCode = 1; return;
+      }
       const blocked = { ...s, phase: "BLOCKED" as const, blockedReason: (error as Error).message, nextAction: "检查原任务和依赖；不重发、不切换渠道" };
       output(save(s, blocked), opts); process.exitCode = 1;
     }
@@ -199,10 +209,34 @@ export function registerReviewCommands(program: Command): void {
     }
     output(save(s, { ...s, phase: "CANCELLED", reviewerConsensus: false, codexConsensus: false, nextAction: note }), opts);
   });
-  action(command("execute", "核对评审门槛后记录执行开始；不直接改业务文件"), opts => {
+  action(command("execute", "核对评审门槛后记录执行开始；计划模式下生成普通执行任务转交信息")
+    .option("--plan-mode-detected", "当前任务被锁在只做计划方案，需要转交普通执行任务", false)
+    .option("--execution-thread <id>", "已经接手修改工作的普通执行任务编号"), opts => {
     const s = current(opts), checked = refresh(s);
-    if (!canExecuteReview(checked)) throw new Error("尚未收到完整评审并通过双方核对，禁止开始修改。");
-    output(save(s, { ...checked, phase: "EXECUTING", executionStartedAt: new Date().toISOString(), nextAction: "Codex 修改文件、运行测试并检查页面" }), opts);
+    const next = save(s, beginReviewExecution(checked, {
+      planModeDetected: opts.planModeDetected,
+      executionThreadId: opts.executionThread,
+    }));
+    if (opts.json && next.executionMode === "handoff-required") {
+      console.log(JSON.stringify({
+        ok: true,
+        session: next,
+        canExecute: false,
+        handoffRequired: true,
+        handoff: {
+          workspaceId: next.workspaceId,
+          sourceThreadId: next.threadId,
+          taskId: next.taskId,
+          round: next.round,
+          summary: next.summary,
+          agreements: next.agreements,
+          result: next.result,
+          instruction: "立即在同一工作区创建普通执行任务；不要重新评审，不要等待用户再发继续。创建后用 --execution-thread 记录新任务编号。",
+        },
+      }));
+      return;
+    }
+    output(next, opts);
   });
   action(command("finish", "记录修改后自检和页面验证完成")
     .requiredOption("--self-check <status>", "PASS")

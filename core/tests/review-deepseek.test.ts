@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { deepseekDependency, deepseekSkillName, readDeepseek, runDeepseek, syncDeepseek } from "../src/review/deepseek.js";
+import { deepseekDependency, deepseekSkillName, readDeepseek, ReviewRateLimitError, runDeepseek, syncDeepseek } from "../src/review/deepseek.js";
 import { canExecuteReview, newReview, ReviewSessionSchema, type ReviewSession } from "../src/review/state.js";
 
 const execScript = vi.hoisted(() => vi.fn());
@@ -383,5 +383,25 @@ describe("DeepSeek installed-script dispatch and state reads", () => {
     fs.rmSync(path.join(deepseekDependency("consensus").skillPath, "scripts", "session_binding.ps1"));
     await expect(runDeepseek(session, "activate")).rejects.toThrow(/缺少/);
     expect(execScript).not.toHaveBeenCalled();
+  });
+
+  it("classifies 429 and rate-limit failures without leaking script output", async () => {
+    const { session } = fixture();
+    execScript.mockRejectedValueOnce(Object.assign(new Error("429 Too Many Requests private-token"), {
+      statusCode: 429, retryAfter: 30,
+    }));
+    const error = await runDeepseek(session, "activate").catch(value => value);
+    expect(error).toBeInstanceOf(ReviewRateLimitError);
+    expect(String(error)).toContain("429");
+    expect(String(error)).not.toContain("private-token");
+    expect(error).toMatchObject({ source: "reviewer", retryAfterSeconds: 30 });
+  });
+
+  it("classifies a normal script response marked rate_limited", async () => {
+    const { session } = fixture();
+    execScript.mockResolvedValueOnce({ stdout: JSON.stringify({ status: "rate_limited", retryAfterSeconds: 12 }) });
+    const error = await runDeepseek(session, "advance").catch(value => value);
+    expect(error).toBeInstanceOf(ReviewRateLimitError);
+    expect(error).toMatchObject({ source: "reviewer", retryAfterSeconds: 12 });
   });
 });

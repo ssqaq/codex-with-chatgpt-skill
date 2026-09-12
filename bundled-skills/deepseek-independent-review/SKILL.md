@@ -3,9 +3,11 @@ name: deepseek-independent-review
 description: "通过 DeepSeek 官网做一次独立技术评审。用户显式点名本 Skill，或明确要求 DeepSeek 独立找错、反驳 Codex、比较方案、复核根因或验证 Codex 判断时使用；普通提及 DeepSeek 不触发。固定在 Codex 右侧栏内置浏览器打开 https://chat.deepseek.com/，目标为保持深度思考和智能搜索开启；一个 Codex thread 只绑定一个专用官网会话和 tab，同一 thread 后续 R2…Rn 复用。"
 ---
 
-## 配套更新 1.18.0
+## 配套更新 1.18.1
 
 通过 codex-with-chatgpt 进入评审时，发送、等待与恢复遵循 [references/reliability.md](references/reliability.md)。发送前使用新鲜浏览器证据；正常回复等待不受两次无变化规则影响；恢复必须重新核对原页面，不直接恢复权限。
+
+评审和执行门槛全部通过后必须立即回到 Codex 执行。当前任务若被锁在“只做计划方案”，不要等待用户再发“继续”：调用 `c2c review execute --plan-mode-detected --json` 记录转交要求，在同一工作区建立普通执行任务，随后用 `--execution-thread <新任务号>` 记录接手任务。新任务直接修改、测试和复核，不重新发起评审。
 
 
 # DeepSeek独立一次评审

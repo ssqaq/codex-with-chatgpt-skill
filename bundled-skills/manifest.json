@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "1.18.0",
+  "version": "1.18.2",
   "skills": {
     "deepseek-consensus-review": {
       "agents/openai.yaml": "0adf2365ca8c6a002f65d2ce65b43269ff4f5eccaf88c8d4dbef8454ebbb401e",
@@ -19,13 +19,13 @@
       "scripts/review_checkpoint.ps1": "40d9abdb469ce97a26ad6c69209b5a2397b74adb30839e581e36948e81913fc0",
       "scripts/review_round.ps1": "4a7c15acc69b09176860abfd0b1642d02dc4f7222968286df08af6cf56bc0733",
       "scripts/send_review_round.ps1": "5301f80a0fe565aeab1b593cddd2348d9e5e2b290d2bb1230b43958bc18a8a6e",
-      "scripts/session_binding.ps1": "6756dfeb6f0d1c703712ac0c489d58f1fde56b32eca2a749b5932f4839cc3ad0",
+      "scripts/session_binding.ps1": "e8376a5cee78665dd47608a77896de480a9e0b3edb9fc01bd8da97bcbecf6bfb",
       "scripts/show_pending_receipts.ps1": "f45c679a4c71cb9943ce7059cc6464796d4df216ad83090dd8f0caa01f8aecdd",
       "scripts/show_review_dashboard.ps1": "fe4901441af93e13f6c8ea7853cfcb99fb7edfd82be3af050513877aef5a357a",
       "scripts/sync_references.ps1": "60b0059e9fb07ca26846f81576cbe1fbe7e0330890bd0aa596cd857ae0683077",
       "scripts/update_review_status.ps1": "270ef90b2dfed883e2daab5b06ad993271e3e22572904dfb63e129d434e1cc54",
-      "SKILL.md": "3feee8794ccb1e4a16e3cee4d66282df19d899cc66db9a1303570015e444f289",
-      "VERSION": "04d659518a1793d5396007fcabdc9211a8c1db8406bf4e0fa8069171fdb06518"
+      "SKILL.md": "680b2d51ee2d4091352a5f6a417c72b94e276344759e22537bb139cfe3346c75",
+      "VERSION": "0a1b17e91d514c0c9e88520e6091e2d52a6faf8296892cad7355ff0723a42914"
     },
     "deepseek-independent-review": {
       "agents/openai.yaml": "374e0a9d7956b05d9e7e504b4e7c796a46e5f14f84868a33d3dd84aadb30eb0c",
@@ -44,13 +44,13 @@
       "scripts/review_checkpoint.ps1": "40d9abdb469ce97a26ad6c69209b5a2397b74adb30839e581e36948e81913fc0",
       "scripts/review_round.ps1": "f4c9b7e6899f29d04d68588a5c0a6b11a27d694a77f45e3b71ff55c187d15a28",
       "scripts/send_review_round.ps1": "5301f80a0fe565aeab1b593cddd2348d9e5e2b290d2bb1230b43958bc18a8a6e",
-      "scripts/session_binding.ps1": "72f11e54c5802e81a2e7a83f083b7094d91f5503af898e4f4d0e14d6cda2d4ca",
+      "scripts/session_binding.ps1": "11ee538ce7314e3d714339ce8a16c0461de72832fbf68fb60f96b517571f30ee",
       "scripts/show_pending_receipts.ps1": "f45c679a4c71cb9943ce7059cc6464796d4df216ad83090dd8f0caa01f8aecdd",
       "scripts/show_review_dashboard.ps1": "fe4901441af93e13f6c8ea7853cfcb99fb7edfd82be3af050513877aef5a357a",
       "scripts/sync_references.ps1": "60b0059e9fb07ca26846f81576cbe1fbe7e0330890bd0aa596cd857ae0683077",
       "scripts/update_review_status.ps1": "2728efbf6d649b57e0aeddc865cd24410f854f242549c9a466fcabb58e797d35",
-      "SKILL.md": "d8a6e4632237e34338d8578dc178f54b67dbc6bda0580ef1f704c0e14681fcfa",
-      "VERSION": "04d659518a1793d5396007fcabdc9211a8c1db8406bf4e0fa8069171fdb06518"
+      "SKILL.md": "175f40a93e072384f55c28853c6be724de03f40d9a68d88e10b19e5b92e7a8f5",
+      "VERSION": "0a1b17e91d514c0c9e88520e6091e2d52a6faf8296892cad7355ff0723a42914"
     }
   }
 }

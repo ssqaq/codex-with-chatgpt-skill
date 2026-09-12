@@ -9,7 +9,8 @@ $base=@{TaskId=$task;CodexThreadId=$thread;StateDir=$StateDir}
 $dom=@{EvidenceSource='dom';BrowserSurface='codex-in-app-sidebar';BrowserTabId='synthetic-tab';BrowserRuntimeId='synthetic-runtime';RuntimeEpoch=1;TabMatchCount=1;
  DomTargetUrl='https://chat.deepseek.com/';DomSessionTitle='Synthetic test';DomModel='网页当前模型（合并升级版）';DomReasoning='深度思考';DomSearch='智能搜索';DomInputPresence='present';DomInputEnabled='enabled'}
 & (Join-Path $scripts 'session_binding.ps1') @base @dom -Action BeginBootstrap -ExpectedMessageMarker $marker | Out-Null
-$lease=& (Join-Path $scripts 'session_binding.ps1') @base @dom -Action AcquireBrowserLease | ConvertFrom-Json
+$acquireDom=$dom.Clone();$acquireDom.Remove('TabMatchCount')
+$lease=& (Join-Path $scripts 'session_binding.ps1') @base @acquireDom -Action AcquireBrowserLease | ConvertFrom-Json
 $token=$lease.leaseToken
 if(-not $token){$token=$lease.lease.token}
 $epoch=$lease.leaseEpoch
@@ -29,7 +30,20 @@ $dom.DomMessageMarker=$marker
 $sessionId='official-chat:synthetic-session-123'
 & (Join-Path $scripts 'session_binding.ps1') @base @dom -Action CompleteBootstrap -DeepSeekSessionId $sessionId -LeaseToken $token -LeaseEpoch $epoch | Out-Null
 & (Join-Path $scripts 'session_binding.ps1') @base @dom -Action RecordSendOutcome -DeepSeekSessionId $sessionId -MessageFingerprint $fp -ReceiptStatus confirmed -DomMessagePresence present -OpenTabsEvidence confirmed -TabsListEvidence unknown -SubmissionMechanism enter -SubmissionStatus succeeded -LeaseToken $token -LeaseEpoch $epoch | Out-Null
-& (Join-Path $scripts 'session_binding.ps1') @base @dom -Action ReleaseBrowserLease -LeaseToken $token -LeaseEpoch $epoch | Out-Null
+$wrongReleaseRejected=$false
+try {
+ $wrongRelease=@{BrowserSurface='external-browser';BrowserRuntimeId=$dom.BrowserRuntimeId;RuntimeEpoch=$dom.RuntimeEpoch}
+ & (Join-Path $scripts 'session_binding.ps1') @base @wrongRelease -Action ReleaseBrowserLease -LeaseToken $token -LeaseEpoch $epoch | Out-Null
+} catch {$wrongReleaseRejected=$true}
+if(-not $wrongReleaseRejected){throw 'Mismatched browser surface was accepted'}
+$releaseDom=@{BrowserRuntimeId=$dom.BrowserRuntimeId;RuntimeEpoch=$dom.RuntimeEpoch}
+& (Join-Path $scripts 'session_binding.ps1') @base @releaseDom -Action ReleaseBrowserLease -LeaseToken $token -LeaseEpoch $epoch | Out-Null
+$wrongAcquireRejected=$false
+try {
+ $wrongAcquire=$acquireDom.Clone();$wrongAcquire.BrowserRuntimeId='other-runtime'
+ & (Join-Path $scripts 'session_binding.ps1') @base @wrongAcquire -Action AcquireBrowserLease | Out-Null
+} catch {$wrongAcquireRejected=$true}
+if(-not $wrongAcquireRejected){throw 'Mismatched browser runtime was accepted'}
 $statuses=@()
 1..3 | ForEach-Object {
  $r=& (Join-Path $scripts 'advance_review_workflow.ps1') @base -Action RecordReport | ConvertFrom-Json
@@ -38,4 +52,4 @@ $statuses=@()
 $state=Get-Content (Join-Path $StateDir "$task.json") -Raw | ConvertFrom-Json
 if($state.lastReceiptStatus -ne 'confirmed' -or $state.sendPhase -ne 'receipt-confirmed' -or $state.pendingReceipt -eq 'true'){throw 'Receipt not confirmed'}
 if($statuses -contains 'workflow-stalled'){throw 'Normal waiting was treated as stalled'}
-@{ok=$true;synthetic=$true;receiptConfirmed=$true;duplicateReportsPaused=$false;checkpointExists=(Test-Path (Join-Path $StateDir "$task.checkpoint.json"))}|ConvertTo-Json -Compress
+@{ok=$true;synthetic=$true;receiptConfirmed=$true;acquireRecoveredUniqueTab=$true;releaseRecoveredSurface=$true;wrongAcquireRejected=$wrongAcquireRejected;wrongReleaseRejected=$wrongReleaseRejected;duplicateReportsPaused=$false;checkpointExists=(Test-Path (Join-Path $StateDir "$task.checkpoint.json"))}|ConvertTo-Json -Compress
