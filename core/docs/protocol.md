@@ -493,3 +493,13 @@ no 40-step epics. Use C2C control messages.
 ## 429/503 服务暂停（1.19.0）
 
 评审服务返回 429 或 503 时，Codex 保存服务暂停检查点并暂停当前轮次。没有 Retry-After 时，429 从 30 秒、503 从 60 秒开始指数退避，最多 15 分钟；显式恢复且到达恢复时间后只检查一次。不会重复发送、重复建会话或在共识前修改文件。
+
+
+## 1.19.1 浏览器回复和计时
+
+新 DeepSeek 任务在写入轮次前执行 `c2c review reply --evidence <短证据JSON>`，核验原会话、本轮完整助手回复及唯一 TASK_ID、ROUND、DECISION。该命令不确认 Codex 共识。`review get --json` 新增 polling、timing；旧字段保持兼容。缺少计时为 null，不补造；网页思考时间不代表总耗时。详细合同见随 Skill 发布的 `references/browser-runtime.md`。
+
+
+最终复核新增 REVIEW_STAGE: FINAL、PLAN_ROUNDS 和 EXECUTION_SUMMARY；沿原会话继续一个独立复核轮，方案轮数固定在 planRoundCount。执行端在真实修改与检查后调用 review final-prepare --summary <结果摘要> --self-check PASS --page-verify PASS。保持原 executionStartedAt，保存 executionVerifiedAt；当前最终回复与双方核对通过后才能 finish。失败、取消或未通过最终复核时不能写 DONE。
+
+每轮 timings 保存 messageReadyAt、sendPageVerifiedAt 对应的 pageVerifiedAt、submittedAt、firstReplyObservedAt、replyCompletedObservedAt、codexReviewedAt、consensusAt、recoveryStartedAt/recoveryFinishedAt 和 maxObservationDelayMs。UTC/时区等价时间按时间点比较；旧数据缺失为 null。发送回执必须先于等待回复保存，过期 lease 只在原页核对后重新获取并补录原发送，不重发。

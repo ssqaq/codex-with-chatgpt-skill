@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ReviewSession } from "./state.js";
+import { markTiming } from "./timing.js";
 
 export const WaitSchema = z.object({
   round: z.number().int().positive(), startedAt: z.string().datetime(),
@@ -7,6 +8,7 @@ export const WaitSchema = z.object({
   lastObservationId: z.string().max(200).optional(), progressFingerprint: z.string().max(128).optional(),
   pageStatus: z.enum(["unverified", "thinking", "reply-ready", "unavailable", "login-required"]),
   lastReportedMinute: z.number().int().min(-1).default(-1),
+  maxObservationDelayMs: z.number().nonnegative().optional(),
 }).strict();
 export type ReviewWait = z.infer<typeof WaitSchema>;
 export const REVIEW_IDLE_TIMEOUT_MINUTES = 10;
@@ -20,6 +22,15 @@ export const ObservationSchema = z.object({
 }).strict();
 export type ReviewObservation = z.infer<typeof ObservationSchema>;
 
+export function nextReviewCheck(s: ReviewSession, now = new Date()) {
+  const w = s.wait;
+  if (s.phase !== "WAITING" || !w || w.round !== s.round) return { checkAfterMs: 0, nextAction: s.nextAction };
+  if (w.pageStatus === "reply-ready") return { checkAfterMs: 0, nextAction: "read-and-validate-current-reply" };
+  const interval = +now - Date.parse(w.startedAt) < 60000 ? 5000 : 15000;
+  return { checkAfterMs: w.lastCheckedAt ? Math.max(0, interval - (+now - Date.parse(w.lastCheckedAt))) : 0,
+    nextAction: "observe-original-page", intervalMs: interval };
+}
+
 // Local commands never claim to have inspected a page. Only a fresh browser
 // observation changes lastCheckedAt. Equal page snapshots are normal while thinking.
 export function trackWait(previous: ReviewSession, next: ReviewSession, now = new Date(), sentAt?: string): ReviewSession {
@@ -28,7 +39,8 @@ export function trackWait(previous: ReviewSession, next: ReviewSession, now = ne
   if (next.wait?.round === next.round) return next;
   const sent = sentAt ? Date.parse(sentAt) : NaN;
   const at = Number.isFinite(sent) && sent <= now.getTime() + 5000 ? new Date(Math.min(sent, now.getTime())).toISOString() : now.toISOString();
-  return { ...next, wait: { round: next.round, startedAt: at, lastProgressAt: at, pageStatus: "unverified", lastReportedMinute: -1 } };
+  const timed = Number.isFinite(sent) ? markTiming(next, "submittedAt", at) : next;
+  return { ...timed, wait: { round: next.round, startedAt: at, lastProgressAt: at, pageStatus: "unverified", lastReportedMinute: -1 } };
 }
 
 export function observeReview(s: ReviewSession, input: unknown, now = new Date()): ReviewSession {
@@ -44,13 +56,20 @@ export function observeReview(s: ReviewSession, input: unknown, now = new Date()
   if (wait.lastCheckedAt && Date.parse(e.observedAt) <= Date.parse(wait.lastCheckedAt)) throw new Error("拒绝旧网页观察，计时未重置。");
   if (wait.lastObservationId === e.observationId) throw new Error("该网页观察已记录，不能当作新检查。");
   const changed = !!e.progressFingerprint && e.progressFingerprint !== wait.progressFingerprint;
-  const next = { ...s, wait: { ...wait, lastCheckedAt: e.observedAt, lastObservationId: e.observationId,
+  const interval = wait.lastCheckedAt && Date.parse(wait.lastCheckedAt) - Date.parse(wait.startedAt) >= 60000 ? 15000 : 5000;
+  const delay = wait.lastCheckedAt ? Math.max(0, Date.parse(e.observedAt) - Date.parse(wait.lastCheckedAt) - interval) : Math.max(0, Date.parse(e.observedAt) - Date.parse(wait.startedAt));
+  let timed = s;
+  if (e.progressFingerprint) timed = markTiming(timed, "firstReplyObservedAt", e.observedAt);
+  if (e.status === "reply-ready") timed = markTiming(timed, "replyCompletedObservedAt", e.observedAt);
+  if (timed.timings) timed = { ...timed, timings: timed.timings.map(t => t.round === s.round ? { ...t, maxObservationDelayMs: Math.max(t.maxObservationDelayMs ?? 0, delay) } : t) };
+  const next = { ...timed, wait: { ...wait, lastCheckedAt: e.observedAt, lastObservationId: e.observationId,
+    maxObservationDelayMs: Math.max(wait.maxObservationDelayMs ?? 0, delay),
     pageStatus: e.status, progressFingerprint: e.progressFingerprint ?? wait.progressFingerprint,
     lastProgressAt: changed ? e.observedAt : wait.lastProgressAt } };
   // Observing a finished answer never grants consensus or execution permission.
   if (e.status === "unavailable" || e.status === "login-required") return { ...next, phase: "BLOCKED",
     blockedReason: e.status === "login-required" ? "原评审页面需要登录" : "无法读取原评审页面",
-    nextAction: "恢复原页面后重新检查；不重发、不修改" };
+    nextAction: e.status === "unavailable" ? "auto-recover-runtime-tab" : "恢复原页面后重新检查；不重发、不修改" };
   return next;
 }
 

@@ -56,6 +56,6 @@ describe("多轮评审速度和状态优化", () => {
     const handoff = beginReviewExecution(ready(), { planModeDetected: true });
     expect(handoff.executionMode).toBe("handoff-required");
     expect(handoff.handoffRequestedAt).toBeTruthy();
-    expect(handoff.nextAction).toContain("自动发起普通执行任务接力");
+    expect(handoff.nextAction).toContain("已记录普通执行任务接力请求");
   });
 });

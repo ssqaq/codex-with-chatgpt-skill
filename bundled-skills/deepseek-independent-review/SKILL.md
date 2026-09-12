@@ -3,6 +3,11 @@ name: deepseek-independent-review
 description: "通过 DeepSeek 官网做一次独立技术评审。用户显式点名本 Skill，或明确要求 DeepSeek 独立找错、反驳 Codex、比较方案、复核根因或验证 Codex 判断时使用；普通提及 DeepSeek 不触发。固定在 Codex 右侧栏内置浏览器打开 https://chat.deepseek.com/，目标为保持深度思考和智能搜索开启；一个 Codex thread 只绑定一个专用官网会话和 tab，同一 thread 后续 R2…Rn 复用。"
 ---
 
+## 配套更新 1.19.1：浏览器恢复与完整复测
+
+浏览器工具、恢复、轮次衔接和计时统一遵循 [references/browser-runtime.md](references/browser-runtime.md)。当前宿主优先使用 mcp__cua_repl；不得导入内部浏览器包或猜测旧接口。旧任务仍复用原官方对话；暂时冻结按仅恢复流程处理。
+
+
 ## 配套更新 1.19.0
 
 - 第 1 次发送完整短摘要；后续复核只发送新增事实、修改点和当前分歧，不重复上一轮全文。
@@ -54,7 +59,7 @@ Skill chip 不算执行证据。没有真实页面、绑定和回执时不得写
 
 ## 浏览器工具硬闸门（防止五分钟不发送）
 
-- 页面操作只能使用 Codex 右侧栏内置浏览器的 `mcp__node_repl.js`；PowerShell、普通命令、`read_mcp_resource`、文字“继续/下一步”和命令输出都不算浏览器证据，也不能代替点击或发送。
+- 页面操作只能使用 Codex 右侧栏内置浏览器的 `mcp__cua_repl.js`；PowerShell、普通命令、`read_mcp_resource`、文字“继续/下一步”和命令输出都不算浏览器证据，也不能代替点击或发送。
 - 先加载并复用同一个 `iab` 浏览器绑定，再调用一次 `user.openTabs()` 和一次 `tabs.list()` 读取真实标签。只有确认当前 thread 的原 tab 确实不存在，并且已经 `MarkLost` 后，才允许调用一次 `tabs.new()` 建立 replacement tab；禁止在未检查现有 tab 前直接新建。
 - 每次浏览器动作后，下一步必须仍是浏览器工具读取 DOM/截图并核对结果；不得在页面核实到发送之间插入无关扫描、长篇汇报或空转命令。
 - `PrepareSend` 默认只进入 `browserConfirmationStatus=awaiting`，不发送也不启动 deadline。宿主平台确认后调用 `ConfirmBrowserSend`；只有它返回 `sendNow=true` 后才能填入并通过 button 或 Enter 提交，然后回读 DOM。平台确认通过后超过 30 秒仍没有真实发送或回执，立即调用 `FailBrowserWorkflow`。
@@ -84,7 +89,7 @@ Skill chip 不算执行证据。没有真实页面、绑定和回执时不得写
 ### `lost` 绑定优先复用已有官方会话
 
 - `advance_review_workflow.ps1 -Action Advance` 在发现当前 thread 的绑定为 `lost` 且 `replacementRequired=true` 时，必须先返回 `nextAction=bind-existing-official-session`，不能直接新建 replacement，也不能只汇报不推进。
-- 执行端随后必须在 Codex 右侧栏用 `mcp__node_repl.js` 核验当前官方 DeepSeek 会话的真实 URL、标题、当前网页模型、深度思考和智能搜索、DOM marker、tab 和 runtime，再调用 `session_binding.ps1 -Action BindExistingOfficialSession`。这个动作不是“接管当前活动 tab”，而是把已核验的官方 session/tab/runtime 绑定回当前 thread。
+- 执行端随后必须在 Codex 右侧栏用 `mcp__cua_repl.js` 核验当前官方 DeepSeek 会话的真实 URL、标题、当前网页模型、深度思考和智能搜索、DOM marker、tab 和 runtime，再调用 `session_binding.ps1 -Action BindExistingOfficialSession`。这个动作不是“接管当前活动 tab”，而是把已核验的官方 session/tab/runtime 绑定回当前 thread。
 - `BindExistingOfficialSession` 只允许当前 thread 的 `lost/cancelled/terminated` 绑定，或已经终态的旧 Task；如果旧 Task 仍在运行、session/tab/runtime 与当前 bound 绑定不一致、页面不是官网或模式未开启，必须拒绝。
 - 接管成功后必须把旧 Task 的 `pendingReceipt`、`auditRisk`、指纹、确认和重试记录留在 `previousSendAudit`，清空当前发送闸门并同步当前 Task；不能把旧回执当成新消息已发送，也不能自动重发。
 - 只有真实 DOM 核验失败、当前官方 session 无法证明，或两个来源明确 `confirmed-absent` 后，才允许走 `MarkLost → tabs.new → BeginBootstrap -ReplaceLost`。`tabs.list()` 返回 `empty/unknown` 不能跳过绑定核验或直接新建窗口。

@@ -712,7 +712,7 @@ try {
         lastOpenTabsEvidence        = ''
         lastTabsListEvidence        = ''
         lastReceiptEvidenceAt       = ''
-        browserTool                 = 'mcp__node_repl.js'
+        browserTool                 = 'mcp__cua_repl.js'
         browserToolStatus           = 'not-started'
         browserToolCallId           = ''
         browserToolFailureCount     = '0'

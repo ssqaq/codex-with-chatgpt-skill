@@ -4,6 +4,8 @@ import { z } from "zod";
 import { ensureDir, getStateDir, writeSecureJson } from "../config/paths.js";
 import { REVIEW_PROVIDERS, providerLabel, type ReviewMode, type ReviewProvider } from "./provider.js";
 import { WaitSchema, waitProgress } from "./wait.js";
+import { RoundTimingSchema, timingSummary } from "./timing.js";
+import { AcceptedReplySchema } from "./reply.js";
 
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/).refine(s => s !== "." && s !== "..");
 const summary = z.string().max(2400);
@@ -23,6 +25,8 @@ const RateLimitSchema = z.object({
 export const ReviewSessionSchema = z.object({
   schemaVersion: z.literal(1), workspaceId: id, threadId: id, taskId: id,
   reviewProvider: z.enum(REVIEW_PROVIDERS), reviewMode: z.enum(["single", "consensus"]),
+  reviewStage: z.enum(["plan", "final"]).optional(),
+  planRoundCount: z.number().int().positive().optional(),
   round: z.number().int().positive().safe(),
   phase: reviewPhase,
   summary, previousSummary: summary.optional(), roundDelta: roundDelta.optional(),
@@ -36,6 +40,9 @@ export const ReviewSessionSchema = z.object({
   evidenceFingerprint: z.string().max(256).optional(),
   evidenceRound: z.number().int().positive().safe().optional(),
   wait: WaitSchema.optional(),
+  timings: z.array(RoundTimingSchema).optional(),
+  replyValidationVersion: z.literal(1).optional(),
+  acceptedReply: AcceptedReplySchema.optional(),
   rateLimit: RateLimitSchema.optional(),
   recoveryRequired: z.boolean().optional(),
   executionMode: z.enum(["same-thread", "handoff-required", "handoff-started"]).optional(),
@@ -43,6 +50,8 @@ export const ReviewSessionSchema = z.object({
   handoffRequestedAt: z.string().datetime().optional(),
   createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
   executionStartedAt: z.string().datetime().optional(),
+  executionCompletedAt: z.string().datetime().optional(),
+  executionVerifiedAt: z.string().datetime().optional(),
   executionLastReportedMinute: z.number().int().min(-1).optional(),
   verification: z.object({ selfCheck: z.literal("PASS"), pageVerify: z.enum(["PASS", "NOT_APPLICABLE"]), at: z.string().datetime() }).optional(),
 }).strict();
@@ -100,11 +109,35 @@ export function newReview(input: { workspaceId: string; threadId: string; taskId
 
 function hasExecutionConsensus(s: ReviewSession): boolean {
   return !s.recoveryRequired && s.phase === "READY" && s.replyReceived && s.receiptStatus === "confirmed" &&
+    (!s.replyValidationVersion || (s.acceptedReply?.round === s.round && (s.reviewMode === "single" || s.acceptedReply.decision === "CONSENSUS"))) &&
     s.codexConsensus && s.reviewerConsensus && !s.disagreements && !s.blockedReason && !s.rateLimit;
+}
+
+export function prepareFinalReview(s: ReviewSession, finalSummary: string, now = new Date()): ReviewSession {
+  if (s.reviewProvider !== "deepseek" || s.phase !== "EXECUTING" || !s.executionStartedAt || !hasExecutionConsensus({ ...s, phase: "READY" })) {
+    throw new Error("只有实际执行并通过检查后，才能准备修改结果复核。");
+  }
+  if (s.reviewStage === "final") throw new Error("最终复核已开始，恢复当前复核，不重复发送。");
+  return { ...s, reviewStage: "final", planRoundCount: s.round, round: s.round + 1,
+    previousSummary: s.summary, summary: finalSummary, roundDelta: undefined,
+    phase: "PREPARING", reviewerConsensus: false, codexConsensus: false, replyReceived: false,
+    acceptedReply: undefined, wait: undefined, receiptStatus: "none", blockedReason: "",
+    executionVerifiedAt: now.toISOString(), nextAction: "发送修改结果摘要，等待独立最终复核" };
 }
 
 export function canExecuteReview(s: ReviewSession): boolean {
   return hasExecutionConsensus(s) && s.executionMode !== "handoff-required";
+}
+
+export function assertReviewCompletion(s: ReviewSession, selfCheck: string, pageVerify: string): void {
+  if (s.phase !== "EXECUTING" || !s.executionStartedAt || !hasExecutionConsensus({ ...s, phase: "READY" }) ||
+      selfCheck !== "PASS" || !["PASS", "NOT_APPLICABLE"].includes(pageVerify)) {
+    throw new Error("评审依据或检查未通过，不能完成任务。");
+  }
+  if (s.reviewProvider === "deepseek" && s.replyValidationVersion &&
+      (s.reviewStage !== "final" || !s.executionVerifiedAt || s.acceptedReply?.decision !== "CONSENSUS")) {
+    throw new Error("DeepSeek 尚未通过修改结果的独立最终复核。");
+  }
 }
 
 /** A retry is never automatic. The caller must request one explicitly; a server-provided
@@ -155,6 +188,7 @@ export function beginReviewExecution(
   s: ReviewSession,
   input: { planModeDetected?: boolean; executionThreadId?: string } = {}
 ): ReviewSession {
+  if (s.phase === "EXECUTING" && s.executionStartedAt && hasExecutionConsensus({ ...s, phase: "READY" })) return s;
   if (!hasExecutionConsensus(s)) throw new Error("尚未收到完整评审并通过双方核对，禁止开始修改。");
   const targetThreadId = input.executionThreadId?.trim();
 
@@ -164,7 +198,7 @@ export function beginReviewExecution(
       executionMode: "handoff-required",
       executionThreadId: undefined,
       handoffRequestedAt: new Date().toISOString(),
-      nextAction: "已自动发起普通执行任务接力；立即在同一工作区创建普通执行任务并接手当前共识摘要，不要重新评审或等待用户再发继续",
+      nextAction: "已记录普通执行任务接力请求；取得真实接手回执后才算开始执行，不要重新评审",
     };
   }
 
@@ -209,12 +243,15 @@ export function executionProgress(s: ReviewSession, now = new Date()): { message
 }
 
 export function renderReview(s: ReviewSession, now = new Date()): string {
+  const timing = timingSummary(s, now).rounds.find(t => t.round === s.round);
+  const duration = (ms: number | null | undefined) => ms == null ? "未记录" : `${Math.round(ms / 1000)} 秒`;
   const status = { PREPARING: "准备评审", WAITING: "等待网页回复", REVIEWED: "已收到评审，Codex 核对中", READY: s.executionMode === "handoff-required" ? "评审通过，正在转交正常执行任务" : "评审通过，可开始修改",
     EXECUTING: "正在修改和测试", DONE: "已完成", BLOCKED: "已暂停", CANCELLED: "已取消" }[s.phase];
   return [
     `评审渠道：${providerLabel(s.reviewProvider)}`,
-    s.reviewMode === "single" ? "评审方式：单次评审" : `多轮评审：第 ${s.round} 轮`,
+    s.reviewStage === "final" ? `修改结果最终复核（方案评审 ${s.planRoundCount} 轮，单独计数）` : s.reviewMode === "single" ? "评审方式：单次评审" : `多轮评审：第 ${s.round} 轮`,
     `当前状态：${status}`,
+    ...(timing ? [`本轮耗时：准备到提交 ${duration(timing.preparationToSubmitMs)}；观察到完整回复 ${duration(timing.observedReplyWaitMs)}；Codex 核对 ${duration(timing.codexReviewMs)}；浏览器恢复 ${duration(timing.recoveryElapsedMs)}`] : []),
     ...(s.wait && (s.phase === "WAITING" || s.phase === "BLOCKED") ? [waitProgress(s, now).message] : []),
     ...(s.phase === "EXECUTING" ? [executionProgress(s, now).message] : []),
     ...(s.rateLimit ? [`${s.rateLimit.statusCode === "503" ? "服务暂时不可用" : "服务限流"}：第 ${s.rateLimit.attempts} 次（${s.rateLimit.statusCode}），等待服务恢复后再试${s.rateLimit.retryAfterAt ? `（可在 ${s.rateLimit.retryAfterAt} 后检查）` : ""}；不会重复发送`] : []),

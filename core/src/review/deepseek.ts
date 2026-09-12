@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import type { ReviewMode } from "./provider.js";
 import { ReviewSessionSchema, type ReviewSession } from "./state.js";
 import { trackWait } from "./wait.js";
+import { markTiming } from "./timing.js";
 import { createHash } from "node:crypto";
 
 const execFileAsync = promisify(execFile);
@@ -101,6 +102,7 @@ export async function runDeepseek(s: ReviewSession, action: "activate" | "advanc
 
 type Raw = Record<string, unknown>;
 const text = (v: unknown): string => typeof v === "string" ? v.trim() : "";
+const sameInstant = (a: unknown, b: unknown): boolean => Number.isFinite(Date.parse(text(a))) && Date.parse(text(a)) === Date.parse(text(b));
 const MODEL_NAMES = new Set(["网页当前模型（合并升级版）", "专家模式"]);
 const SEARCH_MODE = "智能搜索";
 // PowerShell writes booleans to the registry and boolean strings to task files.
@@ -161,7 +163,7 @@ export function syncDeepseek(s: ReviewSession, source: Raw | null, bindings: Raw
   const batch = text(source.reviewBatch).match(s.reviewMode === "consensus" ? /^C([1-9]\d*)$/ : /^R([1-9]\d*)$/);
   if (!batch || !Number.isSafeInteger(Number(batch[1]))) return block("DeepSeek 轮次无效");
   const round = Number(batch[1]);
-  if (s.reviewMode === "single" && round !== 1) return block("单次评审只接受 R1；新的复核需要新的任务编号");
+  if (s.reviewMode === "single" && round !== 1 && !(s.reviewStage === "final" && round === 2)) return block("单次评审只接受 R1；新的复核需要明确的最终复核阶段");
   if (round < s.round) return block("拒绝旧轮次回执");
   base.round = round;
   const revision = integer(source.stateRevision);
@@ -169,7 +171,7 @@ export function syncDeepseek(s: ReviewSession, source: Raw | null, bindings: Raw
   base.evidenceRevision = revision;
   if (risk(source.decisionDeadlock)) return block("连续评审仍有相同分歧，等待用户决定", "await-user-decision");
   if (source.nextAction === "auto-recover-runtime-tab" && (source.taskTerminalStatus === "frozen" || b?.status === "recovery-pending")) {
-    return block("浏览器暂时断开，保留当前轮次并恢复原任务", "auto-recover-runtime-tab");
+    return markTiming(block("浏览器暂时断开，保留当前轮次并恢复原任务", "auto-recover-runtime-tab"), "recoveryStartedAt", text(source.lastBrowserToolAt) || new Date().toISOString());
   }
   if (source.activationStatus !== "activated" || source.taskTerminalStatus !== "active" || risk(source.reviewCancelled)) return block("DeepSeek 评审未激活、已暂停或已结束");
   const unsafe = [source, ...(b ? [b] : [])].some(x => ["pendingReceipt", "auditRisk", "resendBlocked", "auditOnly"].some(k => risk(x[k])));
@@ -212,12 +214,29 @@ export function syncDeepseek(s: ReviewSession, source: Raw | null, bindings: Raw
         text(records[0].deepSeekPosition) !== text(source.deepSeekPosition) || text(records[0].unresolvedIssues) !== text(source.unresolvedIssues)) return block("DeepSeek 轮次记录与当前回复不一致");
     roundConsensus = records[0].consensusReached === true && !!text(records[0].codexPosition) && !text(records[0].unresolvedIssues);
   }
-  const reviewerConsensus = received && (s.reviewMode === "single" || (roundConsensus && source.consensusStatus === "已达成"));
+  const proof = s.acceptedReply;
+  if (received && s.replyValidationVersion && (!proof || proof.round !== round || proof.messageFingerprint !== fingerprint || proof.conversationUrl !== url)) {
+    return { ...base, receiptStatus: "confirmed", phase: "WAITING", nextAction: "read-and-validate-current-reply", blockedReason: "" };
+  }
+  const reviewerConsensus = received && (s.reviewMode === "single" ? s.reviewStage !== "final" || proof?.decision === "CONSENSUS" : (roundConsensus && source.consensusStatus === "已达成" && (!s.replyValidationVersion || proof?.decision === "CONSENSUS")));
   const codexConsensus = reviewerConsensus && source.codexSummaryStatus === "已完成" && source.checkResult === "无问题" && source.planStatus === "已敲定" && source.executionStatus === "允许开始执行" && !base.disagreements;
-  return trackWait(s, { ...base, receiptStatus: "confirmed", replyReceived: received, reviewerConsensus, codexConsensus,
-    phase: codexConsensus ? (s.phase === "EXECUTING" ? "EXECUTING" : "READY") : received ? "REVIEWED" : "WAITING",
-    blockedReason: "", nextAction: codexConsensus ? "Codex 开始修改、测试和复核" : text(source.nextAction).slice(0, 500) || "读取当前网页完整回复，不重复发送",
-  }, new Date(), source.browserActionAt === b.browserActionAt ? text(source.browserActionAt) : undefined);
+  let projected: ReviewSession = { ...base, receiptStatus: "confirmed", replyReceived: received, reviewerConsensus, codexConsensus,
+    phase: codexConsensus ? (s.executionStartedAt ? "EXECUTING" : "READY") : received ? "REVIEWED" : "WAITING",
+    blockedReason: "", nextAction: codexConsensus ? "Codex 开始修改、测试和复核" : received ? text(source.nextAction).slice(0, 500) || "核对本轮回复" : "observe-original-page",
+  };
+  if (sameInstant(source.browserActionAt, b.browserActionAt)) projected = markTiming(projected, "submittedAt", text(source.browserActionAt));
+  // Send-scoped capture stays unchanged by later connection recovery.
+  if (sameInstant(source.sendPageVerifiedAt, b.sendPageVerifiedAt) &&
+      Date.parse(text(source.sendPageVerifiedAt)) <= Date.parse(text(source.browserActionAt))) {
+    projected = markTiming(projected, "pageVerifiedAt", text(source.sendPageVerifiedAt));
+  }
+  if (received && Array.isArray(source.roundHistory)) {
+    const record = source.roundHistory.find(r => object(r) && r.roundNumber === round);
+    if (object(record) && text(record.recordedAt)) projected = markTiming(projected, "codexReviewedAt", text(record.recordedAt));
+  }
+  if (codexConsensus) projected = markTiming(projected, "consensusAt", new Date().toISOString());
+  if (s.timings?.find(t => t.round === round)?.recoveryStartedAt && b.status === "bound") projected = markTiming(projected, "recoveryFinishedAt", text(b.lastVerifiedAt) || new Date().toISOString());
+  return trackWait(s, projected, new Date(), sameInstant(source.browserActionAt, b.browserActionAt) ? text(source.browserActionAt) : undefined);
 }
 
 export function readDeepseek(s: ReviewSession): ReviewSession {

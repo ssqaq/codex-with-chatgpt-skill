@@ -26,9 +26,9 @@ export function buildReviewMessage(s: ReviewSession): string {
     throw new Error("评审只接收不含密钥、代码块、完整 diff 或日志的短摘要；请先精简脱敏。");
   }
   return ["[C2C]", `REVIEW_PROVIDER: ${s.reviewProvider.toUpperCase()}`, `TASK_ID: ${s.taskId}`,
-    `ROUND: ${s.round}`, `REVIEW_MODE: ${s.reviewMode.toUpperCase()}`, "", s.round > 1 ? "ROUND_DELTA:" : "PLAN_SUMMARY:", summary, "", "REQUEST:",
+    `ROUND: ${s.round}`, `REVIEW_MODE: ${s.reviewMode.toUpperCase()}`, ...(s.reviewStage === "final" ? ["REVIEW_STAGE: FINAL", `PLAN_ROUNDS: ${s.planRoundCount}`] : []), "", s.reviewStage === "final" ? "EXECUTION_SUMMARY:" : s.round > 1 ? "ROUND_DELTA:" : "PLAN_SUMMARY:", summary, "", "REQUEST:",
     s.reviewProvider === "deepseek" ? "仅根据以下摘要独立评审；你没有本地文件连接器，不能声称已读取源码或运行测试。信息不足时列出缺失证据。" : "通过当前工作区连接器核对相关文件，只做评审。",
-    "用中文给出同意点、分歧、建议、测试和成功标准。保留 TASK_ID 和 ROUND。",
-    s.reviewMode === "consensus" ? "有实质分歧时返回 DECISION: REVISE；无分歧且方案完整时返回 DECISION: CONSENSUS。" : "只返回一次完整评审。证据不足时明确说明，不虚构通过结论。",
+    s.round > 1 ? "只评本轮修改点与尚存问题；已同意的内容不重复展开。用中文简述结论、必要建议与验收，正文不超过 600 字；摘要要求更短时按更短上限。不使用代码围栏；TASK_ID、ROUND、DECISION 各用独立一行输出，不能省略或重复。" : "用中文给出同意点、分歧、建议、测试和成功标准，正文控制在 1800 字以内。不使用代码围栏；TASK_ID、ROUND、DECISION 各用独立一行输出，不能省略或重复。",
+    s.reviewMode === "consensus" ? "有实质分歧时返回 DECISION: REVISE；无分歧且方案完整时返回 DECISION: CONSENSUS。" : "只返回一次完整评审，附 DECISION: REVISE 或 DECISION: CONSENSUS。证据不足时明确说明，不虚构通过结论。",
   ].join("\n");
 }

@@ -291,5 +291,51 @@ describe("PowerShell entrypoints with synthetic browser evidence (no web sends)"
     expect(cli("heartbeat")).toMatchObject({ shouldReport: true, round: 1 });
     expect(cli("heartbeat").shouldReport).toBe(false);
     expect(cli("get").session.wait.lastReportedMinute).toBe(4);
+    // Exercise the entire CLI -> native Advance path, not only its projection.
+    vi.stubEnv("C2C_REVIEW_SKILLS_ROOT", path.join(repo, "bundled-skills"));
+    const failed = ps("session_binding.ps1", ["-Action", "FailBrowserWorkflow", "-TaskId", s.taskId, "-CodexThreadId", s.threadId,
+      "-StateDir", dir, "-BrowserTool", "mcp__cua_repl.js", "-BrowserToolStatus", "failed", "-Reason", "Synthetic runtime disconnect"]);
+    expect(failed.status, failed.stderr).toBe(0);
+    const recovered = cli("advance");
+    expect(recovered.session.nextAction).toBe("auto-recover-runtime-tab");
+    const native = JSON.parse(fs.readFileSync(nativeFile, "utf8"));
+    expect(native.requiredAction).toBe("browser-recover-runtime-tab");
+    expect(native.requiredBrowserTool).toBe("mcp__cua_repl.js");
+    expect(native.actionContractDeadlineAt).toBeTruthy();
+    expect(recovered.session.wait.startedAt).toBe(cli("get").session.wait.startedAt);
+    const recoverArgs = ["-Action", "RecoverRuntimeTab", "-TaskId", s.taskId, "-CodexThreadId", s.threadId, "-StateDir", dir,
+      "-EvidenceSource", "dom", "-BrowserSurface", "codex-in-app-sidebar", "-BrowserTabId", "synthetic-tab-reloaded", "-BrowserRuntimeId", "synthetic-runtime-reloaded",
+      "-RuntimeEpoch", "2", "-TabMatchCount", "1", "-DomTargetUrl", "https://chat.deepseek.com/a/chat/s/synthetic-session-123",
+      "-DomSessionTitle", "Synthetic test", "-DomMessageMarker", "CODEX-BINDING-native-test-thread", "-DeepSeekSessionId", "official-chat:synthetic-session-123",
+      "-DomModel", "网页当前模型（合并升级版）", "-DomReasoning", "深度思考", "-DomSearch", "智能搜索"];
+    const registryFile = path.join(dir, "thread-bindings.json");
+    const originalRegistry = fs.readFileSync(registryFile, "utf8");
+    const expiredRegistry = JSON.parse(originalRegistry);
+    expiredRegistry.bindings[0].lastBrowserToolAt = new Date(Date.now() - 61000).toISOString();
+    fs.writeFileSync(registryFile, JSON.stringify(expiredRegistry));
+    const expiredRecovery = ps("session_binding.ps1", recoverArgs);
+    expect(expiredRecovery.status).not.toBe(0);
+    expect(expiredRecovery.stderr).toContain("60 秒");
+    fs.writeFileSync(registryFile, originalRegistry);
+    const restore = ps("session_binding.ps1", recoverArgs);
+    expect(restore.status, restore.stderr).toBe(0);
+    expect(JSON.parse(restore.stdout).status).toBe("runtime-tab-recovered");
+    expect(cli("sync").session.phase).toBe("WAITING");
+    const twice = ps("session_binding.ps1", recoverArgs);
+    expect(twice.status).not.toBe(0);
+    expect(twice.stderr).toContain("一次浏览器恢复");
   }, 20000);
+});
+
+describe("public browser tool compatibility evidence", () => {
+  it.each(["mcp__cua_repl.js", "mcp__node_repl.js"])("accepts %s only with a successful tool observation", tool => {
+    const evidence = { surface:"codex-in-app-sidebar", url:"https://chat.deepseek.com/a/chat/s/synthetic-session-123",
+      model:"网页当前模型（合并升级版）", reasoning:"深度思考", searchMode:"智能搜索", sessionId:"synthetic-session-123",
+      tabId:"tab", runtimeId:"runtime", tabMatchCount:1, tool, toolStatus:"succeeded" };
+    const args = (e: object) => ["-TaskId","compat-test","-CodexThreadId","compat-thread","-BrowserEvidenceJson",JSON.stringify(e)];
+    const good=ps("invoke_browser_smoke_test.ps1",args(evidence));
+    expect(good.status,good.stderr).toBe(0);
+    expect(JSON.parse(good.stdout).model).toBe(evidence.model);
+    expect(ps("invoke_browser_smoke_test.ps1",args({...evidence,toolStatus:"unavailable"})).status).not.toBe(0);
+  });
 });

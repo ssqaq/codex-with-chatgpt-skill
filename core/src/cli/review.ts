@@ -6,9 +6,11 @@ import { Workspace } from "../workspace/manager.js";
 import { mergeSession, readSession, sessionFile, writeSession } from "../session/state.js";
 import { deepseekDependency, readDeepseek, ReviewRateLimitError, runDeepseek } from "../review/deepseek.js";
 import { parseReviewMode, selectReviewer } from "../review/provider.js";
-import { beginReviewExecution, canExecuteReview, changeReview, clearReviewRateLimit, executionProgress, isReviewTerminal, markReviewRateLimited, newReview, readReview, recoverReview, renderReview, canRetryRateLimit, type ReviewSession } from "../review/state.js";
+import { assertReviewCompletion, beginReviewExecution, canExecuteReview, changeReview, clearReviewRateLimit, executionProgress, isReviewTerminal, markReviewRateLimited, newReview, readReview, recoverReview, renderReview, canRetryRateLimit, prepareFinalReview, type ReviewSession } from "../review/state.js";
 import { buildReviewMessage, buildRoundDelta } from "../review/message.js";
-import { observeReview, trackWait, waitProgress } from "../review/wait.js";
+import { observeReview, trackWait, waitProgress, nextReviewCheck } from "../review/wait.js";
+import { markTiming, timingSummary } from "../review/timing.js";
+import { acceptReply } from "../review/reply.js";
 
 type Options = { workspace?: string; thread?: string; json?: boolean; provider?: string; request?: string; mode?: string; task?: string; summary?: string; selfCheck?: string; pageVerify?: string; evidence?: string; planModeDetected?: boolean; executionThread?: string; retryRateLimit?: boolean };
 function context(opts: Options): { workspaceId: string; threadId: string } {
@@ -24,7 +26,7 @@ function current(opts: Options): ReviewSession {
   return s;
 }
 function output(s: ReviewSession, opts: Options): void {
-  console.log(opts.json ? JSON.stringify({ ok: true, session: s, canExecute: canExecuteReview(s) }) : renderReview(s));
+  console.log(opts.json ? JSON.stringify({ ok: true, session: s, canExecute: canExecuteReview(s), polling: nextReviewCheck(s), timing: timingSummary(s) }) : renderReview(s));
 }
 function save(s: ReviewSession, next: ReviewSession): ReviewSession {
   return changeReview(s.workspaceId, s.threadId, prior => {
@@ -118,11 +120,18 @@ export function registerReviewCommands(program: Command): void {
       // Also validate the outgoing summary before committing task state.
       buildReviewMessage(next);
       if (route.taskId && !previous) { claimLegacy(c.workspaceId, c.threadId, route.taskId); return refresh(next); }
-      return next;
+      return markTiming({ ...next, replyValidationVersion: route.provider === "deepseek" ? 1 : undefined }, "messageReadyAt", next.createdAt);
     });
     output(s, opts);
   });
   action(command("get", "读取当前任务已保存的评审进度"), opts => output(current(opts), opts));
+  action(command("reply", "校验本轮完整网页回复；不自动确认 Codex 共识")
+    .requiredOption("--evidence <path>", "真实助手回复的短证据 JSON"), opts => {
+    const s = current(opts), checked = refresh(s);
+    const input = fs.readFileSync(opts.evidence!, "utf8");
+    if (Buffer.byteLength(input) > 16000) throw new Error("回复证据过大，请保留短评审结果。");
+    output(save(s, acceptReply(checked, JSON.parse(input.replace(/^\uFEFF/, "")))), opts);
+  });
   action(command("recover", "从本任务检查点恢复，重新核验前禁止执行")
     .requiredOption("--task <id>", "需要恢复的原评审任务号"), opts => {
     const c = context(opts);
@@ -159,10 +168,10 @@ export function registerReviewCommands(program: Command): void {
     const revisedSummary = opts.summary!.trim();
     const next: ReviewSession = { ...checked, previousSummary: checked.summary, roundDelta: buildRoundDelta(checked.summary, revisedSummary, checked.disagreements), summary: revisedSummary, round: checked.round + 1,
       phase: "PREPARING", reviewerConsensus: false, codexConsensus: false, replyReceived: false,
-      wait: undefined,
+      wait: undefined, acceptedReply: undefined, replyValidationVersion: checked.reviewProvider === "deepseek" ? 1 : undefined,
       receiptStatus: "none", blockedReason: "", nextAction: "按专用 Skill 准备下一轮消息，再用内置浏览器发送" };
     buildReviewMessage(next);
-    output(save(s, next), opts);
+    output(save(s, markTiming(next, "messageReadyAt", new Date().toISOString())), opts);
   });
   action(command("message", "生成待发送的摘要；本命令不会打开网页或发送"), opts => {
     const s = current(opts);
@@ -170,6 +179,15 @@ export function registerReviewCommands(program: Command): void {
     const payload = buildReviewMessage(s);
     console.log(opts.json ? JSON.stringify({ ok: true, sent: false, message: payload }) : payload);
   });
+  action(command("final-prepare", "修改和检查通过后，单独准备最终复核摘要")
+    .requiredOption("--summary <text>", "实际修改、测试和页面结果的短摘要")
+    .requiredOption("--self-check <status>", "PASS")
+    .requiredOption("--page-verify <status>", "PASS | NOT_APPLICABLE"), opts => {
+      if (opts.selfCheck !== "PASS" || !["PASS", "NOT_APPLICABLE"].includes(opts.pageVerify ?? "")) throw new Error("本地检查未通过，不能提交最终复核。");
+      const s = current(opts), next = prepareFinalReview(refresh(s), opts.summary!.trim());
+      buildReviewMessage(next);
+      output(save(s, markTiming(next, "messageReadyAt", next.executionVerifiedAt!)), opts);
+    });
   action(command("sync", "从专用 Skill 读取真实绑定与评审结果"), opts => {
     const s = current(opts); output(save(s, refresh(s)), opts);
   });
@@ -185,7 +203,7 @@ export function registerReviewCommands(program: Command): void {
     const working = s.rateLimit ? clearReviewRateLimit(s) : s;
     try {
       let synced = refresh(working);
-      if (synced.phase === "WAITING" || synced.wait && synced.phase === "BLOCKED") {
+      if (synced.phase === "WAITING" || synced.wait && synced.phase === "BLOCKED" && synced.nextAction !== "auto-recover-runtime-tab") {
         output(save(s, synced), opts); return;
       }
       if (synced.nextAction === "activate-deepseek-skill") {
@@ -253,10 +271,9 @@ export function registerReviewCommands(program: Command): void {
     .requiredOption("--self-check <status>", "PASS")
     .requiredOption("--page-verify <status>", "PASS | NOT_APPLICABLE"), async opts => {
     const s = current(opts), checked = refresh(s);
-    if (!s.executionStartedAt || !["EXECUTING", "WAITING"].includes(s.phase) || opts.selfCheck !== "PASS" || !["PASS", "NOT_APPLICABLE"].includes(opts.pageVerify ?? "")) throw new Error("只有评审通过且修改后的检查通过，才能完成任务。");
-    if (checked.phase !== "EXECUTING" || !checked.reviewerConsensus || !checked.codexConsensus) throw new Error("评审依据已改变，请先复核原任务。");
+    assertReviewCompletion(checked, opts.selfCheck ?? "", opts.pageVerify ?? "");
     if (s.reviewProvider === "chatgpt" && readSession(s.workspaceId)?.checkpoint?.protocolState !== "DONE") throw new Error("ChatGPT 尚未完成修改结果复核。");
     if (s.reviewProvider === "deepseek") await runDeepseek(s, "complete");
-    output(save(s, { ...s, phase: "DONE", verification: { selfCheck: "PASS", pageVerify: opts.pageVerify as "PASS" | "NOT_APPLICABLE", at: new Date().toISOString() }, nextAction: "已完成本次修改和自检" }), opts);
+    output(save(s, { ...checked, phase: "DONE", executionCompletedAt: new Date().toISOString(), verification: { selfCheck: "PASS", pageVerify: opts.pageVerify as "PASS" | "NOT_APPLICABLE", at: new Date().toISOString() }, nextAction: "已完成本次修改和自检" }), opts);
   });
 }

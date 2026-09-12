@@ -47,6 +47,38 @@ function denied(session: ReviewSession) {
 }
 
 describe("DeepSeek native-skill evidence projection", () => {
+  it("uses immutable preflight time, never later receipt or recovery capture", () => {
+    const { session, source, binding } = fixture();
+    const verified = "2026-09-12T01:00:00.123Z", sent = "2026-09-12T01:00:10.456Z";
+    source.sendPageVerifiedAt = binding.sendPageVerifiedAt = verified;
+    binding.sendPageVerifiedAt = "2026-09-12T09:00:00.123+08:00";
+    source.browserActionAt = binding.browserActionAt = sent;
+    source.browserEvidenceCapturedAt = binding.browserEvidenceCapturedAt = "2026-09-12T01:01:00Z";
+    const first = syncDeepseek(session, source, [binding]);
+    expect(first.timings?.[0].pageVerifiedAt).toBe(verified);
+    binding.lastVerifiedAt = "2026-09-12T01:02:00Z";
+    expect(syncDeepseek(first, source, [binding]).timings?.[0].pageVerifiedAt).toBe(verified);
+    delete source.sendPageVerifiedAt; delete binding.sendPageVerifiedAt;
+    expect(syncDeepseek(session, source, [binding]).timings?.[0].pageVerifiedAt).toBeUndefined();
+  });
+
+  it.each(["single", "consensus"] as const)("%s final review resumes original execution only after agreement", mode => {
+    const { session, source, binding } = fixture(mode, 2);
+    session.round = 2; session.reviewStage = "final"; session.planRoundCount = 1;
+    session.executionStartedAt = "2026-09-12T00:00:00Z";
+    session.replyValidationVersion = 1;
+    session.acceptedReply = { taskId: session.taskId, threadId: session.threadId, round: 2,
+      source: "codex-in-app-browser", observationId: "fixture-final", observedAt: "2026-09-12T01:00:00Z",
+      conversationUrl: String(source.conversationUrl), role: "assistant", complete: true,
+      messageFingerprint: String(source.lastMessageFingerprint), replyFingerprint: "a".repeat(64), decision: "CONSENSUS" };
+    const result = syncDeepseek(session, source, [binding]);
+    expect(result.phase).toBe("EXECUTING");
+    expect(result.executionStartedAt).toBe(session.executionStartedAt);
+    expect(canExecuteReview(result)).toBe(false);
+    session.acceptedReply.decision = "REVISE";
+    expect(syncDeepseek(session, source, [binding]).phase).toBe("REVIEWED");
+    expect(syncDeepseek({ ...session, phase: "CANCELLED" }, source, [binding]).phase).toBe("CANCELLED");
+  });
   it.each(["single", "consensus"] as const)("accepts a completed %s review with canonical mixed PowerShell types", mode => {
     const { session, source, binding } = fixture(mode);
     const result = syncDeepseek(session, source, [binding]);

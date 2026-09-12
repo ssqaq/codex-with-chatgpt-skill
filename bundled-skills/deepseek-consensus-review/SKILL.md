@@ -3,6 +3,11 @@ name: deepseek-consensus-review
 description: "通过 DeepSeek 官网与 Codex 做多轮独立共识评审。用户显式点名本 Skill，或明确要求实际调用 DeepSeek 反驳/复核 Codex、比较根因与方案、核对风险/回滚/验证顺序，并要求双方消除实质分歧后再修改时使用；普通提及 DeepSeek 不触发。固定在 Codex 右侧栏内置浏览器打开 https://chat.deepseek.com/，目标为保持深度思考和智能搜索开启；一个 Codex thread 只绑定一个专用官网会话和 tab。"
 ---
 
+## 配套更新 1.19.1：浏览器恢复与完整复测
+
+浏览器工具、恢复、轮次衔接和计时统一遵循 [references/browser-runtime.md](references/browser-runtime.md)。当前宿主优先使用 mcp__cua_repl；不得导入内部浏览器包或猜测旧接口。旧任务仍复用原官方对话；暂时冻结按仅恢复流程处理。
+
+
 ## 配套更新 1.19.0
 
 - 第 1 轮发送完整短摘要；第 2 轮起只发送 `ROUND_DELTA`，包含新增事实、修改点和当前分歧，不重复上一轮全文。
@@ -50,58 +55,9 @@ Skill chip 不是执行证据。没有真实激活状态、绑定、页面和回
 - `iab` 不可用时 fail-closed：报告失败，不得回退到其他浏览器。
 - 页面必须真实显示当前网页模型，并确认“深度思考”和“智能搜索”已开启；不能只靠提示词猜测。
 
-## 浏览器工具硬闸门（防止五分钟不发送）
+## 浏览器操作、恢复和发送
 
-- 页面操作只能使用 Codex 右侧栏内置浏览器的 `mcp__node_repl.js`；PowerShell、普通命令、`read_mcp_resource`、文字“继续/下一步”和命令输出都不算浏览器证据，也不能代替点击或发送。
-- 先加载并复用同一个 `iab` 浏览器绑定，再调用一次 `user.openTabs()` 和一次 `tabs.list()` 读取真实标签。只有确认当前 thread 的原 tab 确实不存在，并且已经 `MarkLost` 后，才允许调用一次 `tabs.new()` 建立 replacement tab；禁止在未检查现有 tab 前直接新建。
-- 每次浏览器动作后，下一步必须仍是浏览器工具读取 DOM/截图并核对结果；不得在页面核实到发送之间插入无关扫描、长篇汇报或空转命令。
-- `PrepareSend` 默认只进入 `browserConfirmationStatus=awaiting`，此时不能发送也不启动 deadline。宿主平台真实确认后调用 `ConfirmBrowserSend`；只有它返回 `sendNow=true` 后，下一步才能填入并通过 button 或 Enter 提交，然后回读 DOM。平台确认通过后超过 30 秒仍没有真实发送或回执，立即调用 `FailBrowserWorkflow` 记录失败并停止本轮。
-- `ConfirmationSource` 只接受 `action-time-user-response` 或浏览器工具真实返回的 `browser-tool-token`；禁止用业务提前授权、Skill chip、文字“继续”或自造 token 冒充宿主平台确认。
-- 平台确认按 `TaskId + fingerprint + session/tab/runtime/lease` 绑定。同一消息确认后，只要尚未执行 fill/click/press、没有提交动作和 DOM 落点，本地参数校验、命令拼接或 DOM 重读失败都必须复用原确认，禁止再次提示“确认发送 Cn”。重新调用 `ConfirmBrowserSend` 可省略确认来源参数；返回 `platform-already-confirmed`、`verified-confirmed-send` 或 `send-confirmed-ready` 时，下一步直接发送。若确认已过 30 秒但仍无浏览器动作，调用 `FailBrowserWorkflow`，也不得靠再次询问刷新确认。
-- 本地激活和已有绑定的 `Claim` 只做必要状态读写，不先扫描项目、日志或全部 tab；目标是各自在 2 秒内完成。完整评审消息必须先准备好，再进入页面核实和发送链。
-- 激活或用户说“继续”后，不能只调用状态面板再重复汇报。必须读取 `nextAction` 并执行对应动作；如果没有 bound 会话，下一步必须是 `prepare-browser-binding`，不能是 `record-next-round`。连续两次汇报没有浏览器动作、状态变化或明确失败记录，视为流程 Bug，立即停止重复汇报并按 `FailBrowserWorkflow` 或恢复/绑定流程收口。
-- “继续”必须先调用 `scripts/advance_review_workflow.ps1 -Action Advance`，由脚本按当前 `CodexThreadId + TaskId` 确定下一步；不能只调用 `show_review_dashboard.ps1`。进度汇报前调用 `-Action RecordReport`，如果 `noOpReportCount>=2`，必须停止重复汇报，改做推进、恢复或明确失败收口。
-- 浏览器工具不可用、调用失败或连续一次无法取得真实页面时，立即调用：
-
-  ```powershell
-  & $sessionBinding -Action FailBrowserWorkflow `
-      -TaskId $TaskId -CodexThreadId $CodexThreadId `
-      -BrowserTool 'mcp__node_repl.js' `
-      -BrowserToolStatus 'unavailable' `
-      -Reason 'Codex 右侧栏浏览器工具不可用，未完成真实发送。'
-  ```
-
-  该动作会释放当前 thread 自己的 lease、冻结发送授权并保留审计；浏览器故障必须先分类，不能把临时断线直接标记成会话丢失。
-
-  - `runtime-disconnected`、`tool-failed`、`unknown`：进入 `recovery-pending`，保留原 session、原 tab、原 runtime 身份和审计；当前任务冻结，最多允许一次 `RecoverRuntimeTab`。新 Task 只能 `Claim` 后恢复原 runtime，返回 `recover-runtime-required` 时禁止新建 tab。
-  - 只有 `MarkLost` 收到两来源明确 `confirmed-absent`，或明确 `wrong-session` 证据时，才允许清空活动身份、进入 `lost` 并执行一次 replacement bootstrap。
-  - 恢复成功后回到 `bound`；恢复失败或达到一次恢复上限时继续冻结并等待明确的丢失证据或用户裁决，不自动循环重连，不重复 Claim，不新建第二个会话。
-
-### 自动恢复硬规则
-
-- `FailBrowserWorkflow` 返回 `recovery-pending` 时，不得把任务交回用户手动恢复；只要 `iab` 重新可用，当前执行端必须自动沿同一 thread/task 执行一次 `Claim → RecoverRuntimeTab → DOM/Verify`。
-- 浏览器临时断线会把任务暂时写成 `taskTerminalStatus=frozen`、`activationStatus=frozen`，但只要 `nextAction=auto-recover-runtime-tab`，原 Task 的 `Claim` 和 `RecoverRuntimeTab` 属于受限“仅恢复”路径，允许继续执行；这不是恢复发送授权，也不是永久终态。
-- 如果 `FailBrowserWorkflow` 已把当前 Task 暂时冻结并写入 `nextAction=auto-recover-runtime-tab`，恢复动作允许原 TaskId 进入“仅恢复”路径；恢复成功后自动回到 active/activated，再继续页面核验。这个恢复路径不等于发送授权，仍必须重新走发送闸门；有 `pendingReceipt/auditRisk` 时继续禁止重发。
-- 两来源都明确确认原 tab/session 不存在后，当前执行端必须自动完成 `MarkLost → tabs.new(https://chat.deepseek.com/) → BeginBootstrap -ReplaceLost`，随后重新核验当前网页模型、深度思考和智能搜索和当前 thread 身份；不得等待用户说“重新打开”。
-- 自动恢复不等于自动发送：恢复页面后仍必须重新取得 DOM 证据，发送继续经过 `PrepareSend → 宿主平台真实确认 → ConfirmBrowserSend`；不得把业务提前授权当成平台发送确认。
-- 每个 thread 最多一次 runtime 恢复、一次 replacement bootstrap；失败后写入明确 `nextAction` 并冻结，禁止循环新建窗口、跨 thread 接管或静默重发。
-- 只有 `iab` 工具本身不可用、平台发送确认需要用户动作或出现决策僵局时，才可以暂停等待用户；“找不到原窗口”本身不再要求用户手动处理。
-
-### `lost` 绑定优先复用已有官方会话
-
-- `advance_review_workflow.ps1 -Action Advance` 在发现当前 thread 的绑定为 `lost` 且 `replacementRequired=true` 时，必须先返回 `nextAction=bind-existing-official-session`，不能直接新建 replacement，也不能只汇报不推进。
-- 执行端随后必须在 Codex 右侧栏用 `mcp__node_repl.js` 核验当前官方 DeepSeek 会话的真实 URL、标题、当前网页模型、深度思考和智能搜索、DOM marker、tab 和 runtime，再调用 `session_binding.ps1 -Action BindExistingOfficialSession`。这个动作不是“接管当前活动 tab”，而是把已核验的官方 session/tab/runtime 绑定回当前 thread。
-- `BindExistingOfficialSession` 只允许当前 thread 的 `lost/cancelled/terminated` 绑定，或已经终态的旧 Task；如果旧 Task 仍在运行、session/tab/runtime 与当前 bound 绑定不一致、页面不是官网或模式未开启，必须拒绝。
-- 接管成功后必须把旧 Task 的 `pendingReceipt`、`auditRisk`、指纹、确认和重试记录留在 `previousSendAudit`，清空当前发送闸门并同步当前 Task；不能把旧回执当成新消息已发送，也不能自动重发。
-- 只有真实 DOM 核验失败、当前官方 session 无法证明，或两个来源明确 `confirmed-absent` 后，才允许走 `MarkLost → tabs.new → BeginBootstrap -ReplaceLost`。`tabs.list()` 返回 `empty/unknown` 不能跳过绑定核验或直接新建窗口。
-
-### 失败流程和崩溃恢复
-
-- `FailBrowserWorkflow` 先写入 `workflow-transaction.<thread>.<task>.json`，再依次更新绑定、释放当前 thread/task 自己的 lease、冻结任务状态；不能只删 lease 或只写一半状态。
-- 任意下一次绑定脚本调用都会先检查属于当前 `CodexThreadId + TaskId` 的未完成事务，并按阶段恢复；恢复后标记 `recoveredFromTransaction=true`，清理事务日志，禁止继续发送。
-- 恢复只允许处理当前 thread/task 的事务。其他 thread 的事务不能被接管、覆盖或清理。
-- 如果失败前已有 `pendingReceipt`，恢复后必须保留 `auditRisk=true` 和原消息审计信息；不能把浏览器工具失败当成“消息不存在”，不能直接重发。
-- 原子替换 JSON 并不等于 DeepSeek 服务端 exactly-once；它只保证本地状态不会被半写覆盖，服务端是否落点仍必须靠 DOM 回读确认。
+按 [references/browser-runtime.md](references/browser-runtime.md) 完成公开工具初始化、原会话恢复、发送回执、完整回复校验和每轮计时。一次恢复最多 60 秒；不重复初始化、不导入内部模块。旧等待规则由此文件统一替代。
 
 ## 会话隔离
 

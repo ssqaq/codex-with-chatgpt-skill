@@ -194,8 +194,8 @@ function Get-ActionContract([string]$ActionName) {
         'prepare-browser-binding' {
             return [pscustomobject]@{
                 requiredAction = 'browser-bind-or-reuse'
-                requiredEvidence = 'mcp__node_repl.js：user.openTabs()+tabs.list()+DOM/截图，核对官网、专家模式、深度思考、session、tab、runtime'
-                browserTool = 'mcp__node_repl.js'
+                requiredEvidence = 'mcp__cua_repl.js：宿主公开标签清单 + 原标签 DOM/截图，核对官网、当前模型、深度思考和智能搜索、session、tab、runtime'
+                browserTool = 'mcp__cua_repl.js'
                 deadlineSeconds = $BrowserActionTimeoutSeconds
                 onTimeout = 'FailBrowserWorkflow'
                 onFailure = 'FailBrowserWorkflow'
@@ -204,8 +204,8 @@ function Get-ActionContract([string]$ActionName) {
         'auto-recover-runtime-tab' {
             return [pscustomobject]@{
                 requiredAction = 'browser-recover-runtime-tab'
-                requiredEvidence = 'mcp__node_repl.js：同一 session、marker、tab 身份和 DOM 核验'
-                browserTool = 'mcp__node_repl.js'
+                requiredEvidence = 'mcp__cua_repl.js：同一 session、marker、tab 身份和 DOM 核验'
+                browserTool = 'mcp__cua_repl.js'
                 deadlineSeconds = $BrowserActionTimeoutSeconds
                 onTimeout = 'FailBrowserWorkflow'
                 onFailure = 'FailBrowserWorkflow'
@@ -214,8 +214,8 @@ function Get-ActionContract([string]$ActionName) {
         'auto-begin-replacement-bootstrap' {
             return [pscustomobject]@{
                 requiredAction = 'browser-replace-lost-session'
-                requiredEvidence = 'mcp__node_repl.js：双来源 confirmed-absent 后的新 tab、官网、专家模式、深度思考和新 session'
-                browserTool = 'mcp__node_repl.js'
+                requiredEvidence = 'mcp__cua_repl.js：双来源 confirmed-absent 后的新 tab、官网、当前模型、深度思考和智能搜索和新 session'
+                browserTool = 'mcp__cua_repl.js'
                 deadlineSeconds = $BrowserActionTimeoutSeconds
                 onTimeout = 'FailBrowserWorkflow'
                 onFailure = 'FailBrowserWorkflow'
@@ -224,8 +224,8 @@ function Get-ActionContract([string]$ActionName) {
         'bind-existing-official-session' {
             return [pscustomobject]@{
                 requiredAction = 'browser-bind-existing-official-session'
-                requiredEvidence = 'mcp__node_repl.js：当前官方会话 URL、标题、专家模式、深度思考、DOM marker、tab/runtime'
-                browserTool = 'mcp__node_repl.js'
+                requiredEvidence = 'mcp__cua_repl.js：当前官方会话 URL、标题、当前模型、深度思考和智能搜索、DOM marker、tab/runtime'
+                browserTool = 'mcp__cua_repl.js'
                 deadlineSeconds = $BrowserActionTimeoutSeconds
                 onTimeout = 'FailBrowserWorkflow'
                 onFailure = 'FailBrowserWorkflow'
@@ -235,7 +235,7 @@ function Get-ActionContract([string]$ActionName) {
             return [pscustomobject]@{
                 requiredAction = 'platform-confirm-send'
                 requiredEvidence = '宿主平台真实发送确认；不是文字“继续”、Skill chip 或业务授权'
-                browserTool = 'mcp__node_repl.js'
+                browserTool = 'mcp__cua_repl.js'
                 deadlineSeconds = 0
                 onTimeout = 'wait-for-platform-confirmation'
                 onFailure = 'FailBrowserWorkflow'
@@ -244,8 +244,8 @@ function Get-ActionContract([string]$ActionName) {
         'send-immediately' {
             return [pscustomobject]@{
                 requiredAction = 'browser-fill-submit-and-read'
-                requiredEvidence = 'mcp__node_repl.js：输入框 present/enabled、button 或 Enter 提交成功、DOM 消息落点、openTabs/tabs.list'
-                browserTool = 'mcp__node_repl.js'
+                requiredEvidence = 'mcp__cua_repl.js：输入框 present/enabled、button 或 Enter 提交成功、DOM 消息落点、宿主公开标签清单'
+                browserTool = 'mcp__cua_repl.js'
                 deadlineSeconds = $PlatformSendTimeoutSeconds
                 onTimeout = 'FailBrowserWorkflow'
                 onFailure = 'FailBrowserWorkflow'
@@ -254,8 +254,8 @@ function Get-ActionContract([string]$ActionName) {
         'send-immediately-without-reconfirmation' {
             return [pscustomobject]@{
                 requiredAction = 'browser-fill-submit-and-read'
-                requiredEvidence = 'mcp__node_repl.js：复用同一平台确认后立即提交并回读 DOM'
-                browserTool = 'mcp__node_repl.js'
+                requiredEvidence = 'mcp__cua_repl.js：复用同一平台确认后立即提交并回读 DOM'
+                browserTool = 'mcp__cua_repl.js'
                 deadlineSeconds = $PlatformSendTimeoutSeconds
                 onTimeout = 'FailBrowserWorkflow'
                 onFailure = 'FailBrowserWorkflow'
@@ -264,8 +264,8 @@ function Get-ActionContract([string]$ActionName) {
         'verify-original-send-outcome' {
             return [pscustomobject]@{
                 requiredAction = 'browser-reconcile-original-send'
-                requiredEvidence = 'mcp__node_repl.js：原 session/tab/runtime 的 DOM 消息落点和标签来源'
-                browserTool = 'mcp__node_repl.js'
+                requiredEvidence = 'mcp__cua_repl.js：原 session/tab/runtime 的 DOM 消息落点和标签来源'
+                browserTool = 'mcp__cua_repl.js'
                 deadlineSeconds = $BrowserActionTimeoutSeconds
                 onTimeout = 'FailBrowserWorkflow'
                 onFailure = 'FailBrowserWorkflow'
@@ -275,7 +275,7 @@ function Get-ActionContract([string]$ActionName) {
             return [pscustomobject]@{
                 requiredAction = 'call-FailBrowserWorkflow'
                 requiredEvidence = '记录超时原因、browserToolCallId、当前 task/session/tab/runtime，不重发'
-                browserTool = 'mcp__node_repl.js'
+                browserTool = 'mcp__cua_repl.js'
                 deadlineSeconds = 0
                 onTimeout = 'freeze'
                 onFailure = 'freeze'
@@ -379,7 +379,12 @@ try {
         $changed = $true
     }
     else {
-        if ((Prop $state 'taskTerminalStatus') -in @('completed', 'failed', 'cancelled', 'frozen')) {
+        $recoverable = (Prop $state 'taskTerminalStatus') -eq 'frozen' -and
+            (Prop $state 'nextAction') -eq 'auto-recover-runtime-tab' -and
+            $bindingStatus -eq 'recovery-pending' -and
+            -not (Truthy (Prop $state 'reviewCancelled')) -and
+            (IntValue (Prop $binding 'browserRecoveryCount') 0) -le 1
+        if ((Prop $state 'taskTerminalStatus') -in @('completed', 'failed', 'cancelled', 'frozen') -and -not $recoverable) {
             $resultStatus = 'terminal'
             $blockedReason = '当前 Task 已终态，不能继续推进。'
         }

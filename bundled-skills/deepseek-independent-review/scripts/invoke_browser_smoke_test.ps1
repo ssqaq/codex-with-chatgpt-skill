@@ -61,7 +61,7 @@ if (-not (Is-TargetUrl (Prop $evidence 'url'))) {
     [void]$failures.Add('页面不是 chat.deepseek.com 官网')
 }
 if ((Prop $evidence 'model') -ne '专家模式') {
-    [void]$failures.Add('专家模式未被真实 DOM 证据确认')
+    [void]$failures.Add('当前模型未被真实 DOM 证据确认')
 }
 if ((Prop $evidence 'reasoning') -ne '深度思考') {
     [void]$failures.Add('深度思考未被真实 DOM 证据确认')
@@ -79,7 +79,7 @@ $tabMatchCount = 0
 if (-not [int]::TryParse((Prop $evidence 'tabMatchCount'), [ref]$tabMatchCount) -or $tabMatchCount -ne 1) {
     [void]$failures.Add('没有唯一 tab 匹配证据')
 }
-if ((Prop $evidence 'tool') -ne 'mcp__node_repl.js') {
+if ((Prop $evidence 'tool') -notin @('mcp__cua_repl.js', 'mcp__node_repl.js')) {
     [void]$failures.Add('浏览器工具不是受支持的 Codex 右侧栏工具')
 }
 if ((Prop $evidence 'toolStatus') -notin @('available', 'succeeded')) {
@@ -111,7 +111,7 @@ if ($failures.Count -gt 0) {
     taskId        = $TaskId
     codexThreadId = $CodexThreadId
     targetUrl     = 'https://chat.deepseek.com/'
-    model         = '专家模式'
+    model         = (Prop $evidence 'model')
     reasoning     = '深度思考'
     browser       = 'Codex 右侧栏内置浏览器'
     sendExecuted  = [bool]$RequireSuccessfulSend

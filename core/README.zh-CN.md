@@ -1,5 +1,7 @@
 # Codex with ChatGPT
 
+当前修复版：1.19.1。默认 DeepSeek；[大白话使用说明](../README.md)和[真实复测记录](../docs/verification/1.19.1.md)。
+
 [English](README.md) | **简体中文**
 
 > DeepSeek 或 ChatGPT 负责思考，Codex 负责干活。

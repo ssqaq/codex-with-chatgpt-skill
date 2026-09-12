@@ -52,6 +52,7 @@ param(
     [string]$DomSessionTitle,
     [string]$DomModel,
     [string]$DomReasoning,
+    [string]$DomSearch,
     [ValidateSet('', 'absent', 'present', 'unknown')]
     [string]$DomMessagePresence = '',
     [ValidateSet('', 'present', 'absent', 'unknown')]
@@ -99,7 +100,7 @@ param(
     [int]$LossObservationCount = 0,
     [int]$LossObservationWindowSeconds = 0,
     [string]$LossEvidenceSources = '',
-    [string]$BrowserTool = 'mcp__node_repl.js',
+    [string]$BrowserTool = 'mcp__cua_repl.js',
     [ValidateSet('', 'not-started', 'available', 'failed', 'unavailable')]
     [string]$BrowserToolStatus = '',
     [ValidateSet('', 'runtime-disconnected', 'tool-failed', 'unknown')]
@@ -117,7 +118,8 @@ param(
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $TargetUrl = 'https://chat.deepseek.com/'
-$TargetModel = '专家模式'
+$TargetModel = '网页当前模型（合并升级版）'
+$TargetSearch = '智能搜索'
 $TargetReasoning = '深度思考'
 $TargetBrowserSurface = 'codex-in-app-sidebar'
 $BrowserActionTimeoutSeconds = 60
@@ -163,6 +165,7 @@ function Text([object]$Value) {
     if ($null -eq $Value) {
         return ''
     }
+    if ($Value -is [datetime] -or $Value -is [DateTimeOffset]) { return $Value.ToUniversalTime().ToString('o') }
     return ([string]$Value).Trim()
 }
 
@@ -572,10 +575,11 @@ function Require-Activation {
     }
     if (
         (Prop $state 'targetUrl') -ne $TargetUrl -or
-        (Prop $state 'model') -ne $TargetModel -or
-        (Prop $state 'reasoning') -ne $TargetReasoning
+        (Prop $state 'model') -notin @($TargetModel, '专家模式') -or
+        (Prop $state 'reasoning') -ne $TargetReasoning -or
+        (Prop $state 'searchMode') -ne $TargetSearch
     ) {
-        throw '任务状态不是当前 DeepSeek 官网 + 专家模式 + 深度思考规范。'
+        throw '任务状态不是当前 DeepSeek 官网 + 深度思考 + 智能搜索规范。'
     }
     if (
         -not [string]::IsNullOrWhiteSpace((Prop $state 'conversationUrl')) -and
@@ -637,11 +641,14 @@ function Assert-Dom(
     if ($Bootstrap -and -not (IsBootstrapUrl $DomTargetUrl)) {
         throw '首次绑定必须从 DeepSeek 官网空白会话页开始。'
     }
-    if ((Text $DomModel) -ne $TargetModel) {
-        throw '页面未选中 DeepSeek 专家模式。'
+    if ((Text $DomModel) -notin @($TargetModel, '专家模式')) {
+        throw '页面未确认 DeepSeek 当前模型。'
     }
     if ((Text $DomReasoning) -ne $TargetReasoning) {
         throw '页面未开启深度思考。'
+    }
+    if ((Text $DomSearch) -ne $TargetSearch) {
+        throw '页面未开启智能搜索。'
     }
     if (
         $Marker -and
@@ -802,7 +809,7 @@ function Init-Binding([object]$Binding) {
         retryHistory                  = @()
         domMessagePresence            = ''
         retryExhausted                = $false
-        browserTool                   = 'mcp__node_repl.js'
+        browserTool                   = 'mcp__cua_repl.js'
         browserToolStatus             = 'not-started'
         browserToolCallId             = ''
         browserToolFailureCount       = 0
@@ -922,6 +929,7 @@ function Sync-TaskStateFromBinding([object]$Binding) {
         SetProp $state 'targetUrl' $TargetUrl
         SetProp $state 'model' $TargetModel
         SetProp $state 'reasoning' $TargetReasoning
+        SetProp $state 'searchMode' $TargetSearch
         SetProp $state 'sessionOwner' $CodexThreadId
         $bindingSessionId = Prop $Binding 'deepseekSessionId'
         if (
@@ -982,6 +990,7 @@ function Sync-TaskStateFromBinding([object]$Binding) {
         SetProp $state 'browserActionAt' (Prop $Binding 'browserActionAt')
         SetProp $state 'browserActionEvidence' (Prop $Binding 'browserActionEvidence')
         SetProp $state 'browserEvidenceCapturedAt' (Prop $Binding 'browserEvidenceCapturedAt')
+        SetProp $state 'sendPageVerifiedAt' (Prop $Binding 'sendPageVerifiedAt')
         SetProp $state 'receiptAt' (Prop $Binding 'receiptAt')
         SetProp $state 'submissionMechanism' (Prop $Binding 'submissionMechanism')
         SetProp $state 'submissionStatus' (Prop $Binding 'submissionStatus')
@@ -1316,6 +1325,7 @@ function Reset-TaskScopedSendState(
         browserActionAt        = (Prop $Binding 'browserActionAt')
         browserActionEvidence  = (Prop $Binding 'browserActionEvidence')
         browserEvidenceCapturedAt = (Prop $Binding 'browserEvidenceCapturedAt')
+        sendPageVerifiedAt = (Prop $Binding 'sendPageVerifiedAt')
         receiptAt              = (Prop $Binding 'receiptAt')
         submissionMechanism    = (Prop $Binding 'submissionMechanism')
         submissionStatus       = (Prop $Binding 'submissionStatus')
@@ -1382,6 +1392,7 @@ function Reset-TaskScopedSendState(
              'browserActionAt',
              'browserActionEvidence',
              'browserEvidenceCapturedAt',
+             'sendPageVerifiedAt',
              'receiptAt',
              'submissionMechanism',
              'submissionStatus',
@@ -1491,9 +1502,9 @@ function Assert-Unique(
 function Assert-Local([object]$Binding) {
     if (
         (Prop $Binding 'targetUrl') -ne $TargetUrl -or
-        (Prop $Binding 'model') -ne $TargetModel
+        (Prop $Binding 'model') -notin @($TargetModel, '专家模式')
     ) {
-        throw '当前绑定不是 DeepSeek 官网专家模式会话，不能直接复用。'
+        throw '当前绑定不是已核验的 DeepSeek 官网会话，不能直接复用。'
     }
     $sessionId = Prop $Binding 'deepseekSessionId'
     if (
@@ -1599,6 +1610,7 @@ function Repair-ObsoleteBinding(
     SetProp $Binding 'targetUrl' $TargetUrl
     SetProp $Binding 'model' $TargetModel
     SetProp $Binding 'reasoning' $TargetReasoning
+    SetProp $Binding 'searchMode' $TargetSearch
     SetProp $Binding 'conversationUrl' ''
     SetProp $Binding 'deepseekSessionId' ''
     SetProp $Binding 'deepseekSessionTitle' ''
@@ -1732,8 +1744,9 @@ function Get-RecoverySummary([object]$Binding, [string]$SessionId) {
     )
     $pendingReceipt = BoolProp $Binding 'pendingReceipt'
     $receiptConfirmed = (Prop $Binding 'lastReceiptStatus') -eq 'confirmed'
-    $modelMatch = (Text $DomModel) -eq $TargetModel
+    $modelMatch = (Text $DomModel) -in @($TargetModel, '专家模式')
     $reasoningMatch = (Text $DomReasoning) -eq $TargetReasoning
+    $searchMatch = (Text $DomSearch) -eq $TargetSearch
     $reasons = @()
 
     if ($status -ne 'lost') { $reasons += '当前绑定不是 lost 状态' }
@@ -1742,8 +1755,9 @@ function Get-RecoverySummary([object]$Binding, [string]$SessionId) {
     if (-not $receiptConfirmed) { $reasons += '上一条消息没有 confirmed 回执' }
     if (-not $sessionMatch) { $reasons += '页面 sessionId 与绑定不一致' }
     if (-not $markerMatch) { $reasons += '页面 marker 与绑定不一致' }
-    if (-not $modelMatch) { $reasons += '页面不是专家模式' }
+    if (-not $modelMatch) { $reasons += '尚未核对页面当前模型' }
     if (-not $reasoningMatch) { $reasons += '页面没有开启深度思考' }
+    if (-not $searchMatch) { $reasons += '页面没有开启智能搜索' }
     if (-not $runtimeEpochValid) { $reasons += 'runtime epoch 不符合恢复规则' }
 
     return [pscustomobject][ordered]@{
@@ -1776,6 +1790,7 @@ function Get-RecoverySummary([object]$Binding, [string]$SessionId) {
             $markerMatch -and
             $modelMatch -and
             $reasoningMatch -and
+            $searchMatch -and
             $runtimeEpochValid
         )
         reasons                = @($reasons)
@@ -1829,7 +1844,7 @@ function Get-LostBindingRecoverySummary([object]$Binding, [string]$SessionId) {
     elseif (-not $markerMatch) { $reasons += '当前页面 marker 与历史 marker 不一致' }
     if (-not $tabMatch) { $reasons += '当前 tab 不是历史专用 tab' }
     if (-not $surfaceMatch) { $reasons += '当前页面不是 Codex 右侧栏内置浏览器' }
-    if (-not $modelMatch) { $reasons += '页面不是专家模式' }
+    if (-not $modelMatch) { $reasons += '尚未核对页面当前模型' }
     if (-not $reasoningMatch) { $reasons += '页面没有开启深度思考' }
     if ($pendingReceipt) { $reasons += '历史或当前仍有 pendingReceipt，禁止清除和重发' }
     if ($auditRisk) { $reasons += '历史或当前存在 auditRisk，禁止静默恢复' }
@@ -1913,7 +1928,7 @@ function New-Binding([string]$Status, [string]$Session = '') {
         retryHistory                 = @()
         domMessagePresence           = ''
         retryExhausted               = $false
-        browserTool                  = 'mcp__node_repl.js'
+        browserTool                  = 'mcp__cua_repl.js'
         browserToolStatus             = 'not-started'
         browserToolCallId            = ''
         browserToolFailureCount      = 0
@@ -2118,13 +2133,13 @@ function Result([hashtable]$Data) {
 }
 
 function Get-ActionContract([string]$ActionName) {
-    $browserEvidence = 'mcp__node_repl.js 真实调用回执 + DOM/截图 + 当前 tab/runtime/session'
+    $browserEvidence = 'mcp__cua_repl.js 真实调用回执 + DOM/截图 + 当前 tab/runtime/session'
     switch ($ActionName) {
         'BeginBootstrap' {
             return [pscustomobject]@{
                 requiredAction = 'browser-bind-or-reuse'
-                requiredEvidence = "user.openTabs()、tabs.list()、$browserEvidence"
-                browserTool = 'mcp__node_repl.js'
+                requiredEvidence = "宿主公开标签清单、原标签 DOM；$browserEvidence"
+                browserTool = 'mcp__cua_repl.js'
                 deadlineSeconds = $BrowserActionTimeoutSeconds
                 onTimeout = 'FailBrowserWorkflow'
                 onFailure = 'FailBrowserWorkflow'
@@ -2133,8 +2148,8 @@ function Get-ActionContract([string]$ActionName) {
         'BindExistingOfficialSession' {
             return [pscustomobject]@{
                 requiredAction = 'browser-bind-existing-official-session'
-                requiredEvidence = "当前官方会话 URL、标题、专家模式、深度思考、DOM marker、当前 tab/runtime；$browserEvidence"
-                browserTool = 'mcp__node_repl.js'
+                requiredEvidence = "当前官方会话 URL、标题、当前模型、深度思考和智能搜索、DOM marker、当前 tab/runtime；$browserEvidence"
+                browserTool = 'mcp__cua_repl.js'
                 deadlineSeconds = $BrowserActionTimeoutSeconds
                 onTimeout = 'FailBrowserWorkflow'
                 onFailure = 'FailBrowserWorkflow'
@@ -2160,7 +2175,7 @@ function Get-ActionContract([string]$ActionName) {
     return [pscustomobject]@{
         requiredAction = $name
         requiredEvidence = $browserEvidence
-        browserTool = 'mcp__node_repl.js'
+        browserTool = 'mcp__cua_repl.js'
         deadlineSeconds = if ($ActionName -eq 'ConfirmBrowserSend') {
             $PlatformSendTimeoutSeconds
         } else {
@@ -2218,7 +2233,7 @@ function Invoke-FailBrowserWorkflow {
         $reasonText = 'Codex 右侧栏浏览器工具不可用或调用失败，已停止继续空转。'
     }
     $toolText = if ([string]::IsNullOrWhiteSpace((Text $BrowserTool))) {
-        'mcp__node_repl.js'
+        'mcp__cua_repl.js'
     } else {
         Text $BrowserTool
     }
@@ -2605,6 +2620,7 @@ function Invoke-CancelReview {
             SetProp $binding 'targetUrl' $TargetUrl
             SetProp $binding 'model' $TargetModel
             SetProp $binding 'reasoning' $TargetReasoning
+            SetProp $binding 'searchMode' $TargetSearch
             SetProp $binding 'status' 'cancelled'
             Reset-ActiveIdentityForReplacement $binding $reasonText
             SetProp $binding 'replacementRequired' $true
@@ -2784,6 +2800,7 @@ switch ($Action) {
             SetProp $binding 'targetUrl' $TargetUrl
             SetProp $binding 'model' $TargetModel
             SetProp $binding 'reasoning' (Text $DomReasoning)
+            SetProp $binding 'searchMode' $TargetSearch
             SetProp $binding 'bindingConfidence' 'bootstrap-pending'
             SetProp $binding 'evidenceSource' 'dom'
             SetProp $binding 'domMessageMarker' (Text $ExpectedMessageMarker)
@@ -2909,6 +2926,7 @@ switch ($Action) {
             SetProp $binding 'conversationUrl' (Text $DomTargetUrl)
             SetProp $binding 'model' $TargetModel
             SetProp $binding 'reasoning' (Text $DomReasoning)
+            SetProp $binding 'searchMode' $TargetSearch
             SetProp $binding 'bindingConfidence' (ConfidenceValue)
             SetProp $binding 'evidenceSource' 'dom'
             SetProp $binding 'domSessionTitle' (Text $DomSessionTitle)
@@ -2999,6 +3017,7 @@ switch ($Action) {
             SetProp $binding 'conversationUrl' (Text $DomTargetUrl)
             SetProp $binding 'model' $TargetModel
             SetProp $binding 'reasoning' (Text $DomReasoning)
+            SetProp $binding 'searchMode' $TargetSearch
             SetProp $binding 'browserSurface' $TargetBrowserSurface
             SetProp $binding 'bindingConfidence' (ConfidenceValue)
             SetProp $binding 'evidenceSource' (Text $EvidenceSource)
@@ -3227,6 +3246,7 @@ switch ($Action) {
             SetProp $binding 'conversationUrl' (Text $DomTargetUrl)
             SetProp $binding 'model' $TargetModel
             SetProp $binding 'reasoning' $TargetReasoning
+            SetProp $binding 'searchMode' $TargetSearch
             SetProp $binding 'status' 'bound'
             SetProp $binding 'auditRisk' $false
             SetProp $binding 'auditRiskReason' ''
@@ -3351,6 +3371,7 @@ switch ($Action) {
             SetProp $binding 'expectedMessageMarker' (Text $DomMessageMarker)
             SetProp $binding 'model' $TargetModel
             SetProp $binding 'reasoning' $TargetReasoning
+            SetProp $binding 'searchMode' $TargetSearch
             SetProp $binding 'evidenceSource' 'dom'
             SetProp $binding 'status' 'bound'
             SetProp $binding 'pendingReceipt' $false
@@ -3607,6 +3628,8 @@ switch ($Action) {
             SetProp $binding 'retryExhausted' $false
             $preparedAt = (Get-Date).ToString('o')
             SetProp $binding 'sendPreparedAt' $preparedAt
+            # Preserve the real preflight capture for this send only. Receipt and recovery must not overwrite it.
+            SetProp $binding 'sendPageVerifiedAt' (Text $BrowserEvidenceCapturedAt)
             SetProp $binding 'messageReadyAt' $(if ([string]::IsNullOrWhiteSpace((Text $MessageReadyAt))) { $preparedAt } else { Text $MessageReadyAt })
             SetProp $binding 'confirmationRequestedAt' $preparedAt
             Rev $binding
@@ -3932,6 +3955,16 @@ switch ($Action) {
             ) {
                 throw '恢复页面不是原本机会话。'
             }
+            if ((Prop $binding 'browserRecoveryStatus') -eq 'recovered' -or (LongProp $binding 'browserRecoveryCount') -gt 1 -or ((Prop $binding 'status') -eq 'bound' -and (LongProp $binding 'browserRecoveryCount') -ge 1)) {
+                throw '本任务已使用一次浏览器恢复，保留原会话并暂停，不重复恢复。'
+            }
+            if ((Prop $binding 'status') -eq 'recovery-pending') {
+                $failureAt = [datetimeoffset]::MinValue
+                if (-not [datetimeoffset]::TryParse((Prop $binding 'lastBrowserToolAt'), [ref]$failureAt) -or
+                    ([datetimeoffset]::UtcNow - $failureAt).TotalSeconds -gt 60) {
+                    throw '浏览器恢复超过 60 秒，原轮次和发送记录已保留，未重复发送。'
+                }
+            }
             $nextEpoch = (LongProp $binding 'runtimeEpoch') + 1
             if ($RuntimeEpoch -ne $nextEpoch) {
                 throw "RuntimeEpoch 必须从 $($nextEpoch - 1) 递增为 $nextEpoch。"
@@ -3950,7 +3983,7 @@ switch ($Action) {
             SetProp $binding 'conversationUrl' (Text $DomTargetUrl)
             SetProp $binding 'status' 'bound'
             SetProp $binding 'browserRecoveryStatus' 'recovered'
-            SetProp $binding 'browserRecoveryCount' 0
+            SetProp $binding 'browserRecoveryCount' 1
             SetProp $binding 'browserFailureClass' ''
             SetProp $binding 'browserToolStatus' 'available'
             SetProp $binding 'browserToolFailureReason' ''
@@ -4083,6 +4116,7 @@ switch ($Action) {
             SetProp $binding 'targetUrl' $TargetUrl
             SetProp $binding 'model' $TargetModel
             SetProp $binding 'reasoning' $TargetReasoning
+            SetProp $binding 'searchMode' $TargetSearch
             Rev $binding
             Save-Bindings $bindings
             Result @{

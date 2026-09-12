@@ -51,5 +51,6 @@ $statuses=@()
 }
 $state=Get-Content (Join-Path $StateDir "$task.json") -Raw | ConvertFrom-Json
 if($state.lastReceiptStatus -ne 'confirmed' -or $state.sendPhase -ne 'receipt-confirmed' -or $state.pendingReceipt -eq 'true'){throw 'Receipt not confirmed'}
+if([DateTimeOffset]$state.sendPageVerifiedAt -ne [DateTimeOffset]::Parse($e.capturedAt)){throw 'Receipt overwrote send page verification time'}
 if($statuses -contains 'workflow-stalled'){throw 'Normal waiting was treated as stalled'}
 @{ok=$true;synthetic=$true;receiptConfirmed=$true;acquireRecoveredUniqueTab=$true;releaseRecoveredSurface=$true;wrongAcquireRejected=$wrongAcquireRejected;wrongReleaseRejected=$wrongReleaseRejected;duplicateReportsPaused=$false;checkpointExists=(Test-Path (Join-Path $StateDir "$task.checkpoint.json"))}|ConvertTo-Json -Compress

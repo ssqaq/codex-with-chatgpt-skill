@@ -200,7 +200,7 @@ describe("review execution gate and visible status", () => {
     expect(prepared.phase).toBe("READY");
     expect(prepared.executionMode).toBe("handoff-required");
     expect(prepared.executionThreadId).toBeUndefined();
-    expect(prepared.nextAction).toContain("立即在同一工作区创建普通执行任务");
+    expect(prepared.nextAction).toContain("取得真实接手回执后才算开始执行");
     expect(canExecuteReview(prepared)).toBe(false);
     expect(renderReview(prepared)).toContain("共识已通过，等待正常执行任务接手");
 
