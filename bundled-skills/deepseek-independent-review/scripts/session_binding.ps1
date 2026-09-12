@@ -100,6 +100,8 @@ param(
     [int]$LossObservationCount = 0,
     [int]$LossObservationWindowSeconds = 0,
     [string]$LossEvidenceSources = '',
+    [ValidateSet('', 'not-found', 'unknown')]
+    [string]$OriginalConversationStatus = '',
     [string]$BrowserTool = 'mcp__cua_repl.js',
     [ValidateSet('', 'not-started', 'available', 'failed', 'unavailable')]
     [string]$BrowserToolStatus = '',
@@ -1282,7 +1284,8 @@ function Reset-TaskScopedSendState(
         (BoolProp $Binding 'auditRisk') -or
         (BoolProp $Binding 'resendBlocked') -or
         -not [string]::IsNullOrWhiteSpace((Prop $Binding 'lastReceiptStatus')) -or
-        -not [string]::IsNullOrWhiteSpace((Prop $Binding 'lastMessageFingerprint'))
+        -not [string]::IsNullOrWhiteSpace((Prop $Binding 'lastMessageFingerprint')) -or
+        (LongProp $Binding 'browserRecoveryCount') -gt 0
     )
     $sourceTaskId = Resolve-SendOwnerTaskId $Binding $OldTask
     $capturedAt = (Get-Date).ToString('o')
@@ -1336,6 +1339,9 @@ function Reset-TaskScopedSendState(
         browserToolStatus      = (Prop $Binding 'browserToolStatus')
         browserToolFailureCount = (LongProp $Binding 'browserToolFailureCount')
         browserToolFailureReason = (Prop $Binding 'browserToolFailureReason')
+        browserRecoveryCount   = (LongProp $Binding 'browserRecoveryCount')
+        browserRecoveryStatus  = (Prop $Binding 'browserRecoveryStatus')
+        browserRecoveryTaskId  = (Prop $Binding 'browserRecoveryTaskId')
         lossEvidence           = (Prop $Binding 'lossEvidence')
         lossEvidenceSources    = (Prop $Binding 'lossEvidenceSources')
         lossObservationCount   = (LongProp $Binding 'lossObservationCount')
@@ -1366,6 +1372,10 @@ function Reset-TaskScopedSendState(
     SetProp $Binding 'lossObservationCount' 0
     SetProp $Binding 'lossObservationWindowSeconds' 0
     SetProp $Binding 'browserToolFailureCount' 0
+    SetProp $Binding 'browserRecoveryCount' 0
+    SetProp $Binding 'browserRecoveryStatus' ''
+    SetProp $Binding 'browserRecoveryTaskId' (Text $TaskId)
+    SetProp $Binding 'browserFailureClass' ''
     foreach ($field in @(
             'pendingMessageFingerprint',
             'authorizedMessageFingerprint',
@@ -1424,6 +1434,33 @@ function Rev([object]$Binding) {
     SetProp $Binding 'bindingRevision' $nextRevision
     SetProp $Binding 'bindingVersion' "$SchemaVersion"
     SetProp $Binding 'updatedAt' (Get-Date).ToString('o')
+}
+
+# Repair only a legacy Claim that has not started any browser/send work in this task.
+# An actual recovery sets available/recovered; failures have lastBrowserToolAt.
+function Repair-InheritedRecoveryBudget([object]$Binding) {
+    $previousTask = Prop $Binding 'previousTaskId'
+    if ((Prop $Binding 'status') -ne 'bound' -or
+        (ActiveTask $Binding) -ne (Text $TaskId) -or
+        -not [string]::IsNullOrWhiteSpace((Prop $Binding 'browserRecoveryTaskId')) -or
+        [string]::IsNullOrWhiteSpace($previousTask) -or $previousTask -eq (Text $TaskId) -or
+        -not (IsTaskTerminal $previousTask) -or
+        (Prop $Binding 'browserToolStatus') -ne 'not-started' -or
+        -not [string]::IsNullOrWhiteSpace((Prop $Binding 'lastBrowserToolAt')) -or
+        -not [string]::IsNullOrWhiteSpace((Prop $Binding 'sendPhase')) -or
+        -not [string]::IsNullOrWhiteSpace((Prop $Binding 'lastMessageFingerprint')) -or
+        (BoolProp $Binding 'pendingReceipt') -or (BoolProp $Binding 'auditRisk') -or
+        (LongProp $Binding 'browserRecoveryCount') -lt 1) { return }
+    $audit = @($Binding.previousRecoveryAudit) + @([pscustomobject]@{
+        taskId = $previousTask; capturedAt = (Get-Date).ToString('o')
+        browserRecoveryCount = (LongProp $Binding 'browserRecoveryCount')
+        browserRecoveryStatus = (Prop $Binding 'browserRecoveryStatus')
+        reason = 'legacy-claim-inherited-recovery-budget'
+    })
+    SetProp $Binding 'previousRecoveryAudit' $audit
+    SetProp $Binding 'browserRecoveryCount' 0
+    SetProp $Binding 'browserRecoveryStatus' ''
+    SetProp $Binding 'browserRecoveryTaskId' (Text $TaskId)
 }
 
 function IsInactiveBinding([object]$Binding) {
@@ -3177,6 +3214,7 @@ switch ($Action) {
                 throw 'Claim 禁止换 tab；浏览器重启用 Recover，来源迁移用 MigrateToInAppSidebar。'
             }
             $claimReason = 'Claim复用同一官网会话'
+            Repair-InheritedRecoveryBudget $binding
             $isNewTask = (
                 -not [string]::IsNullOrWhiteSpace((Text $oldTask)) -and
                 $oldTask -ne (Text $TaskId)
@@ -3984,6 +4022,7 @@ switch ($Action) {
             SetProp $binding 'status' 'bound'
             SetProp $binding 'browserRecoveryStatus' 'recovered'
             SetProp $binding 'browserRecoveryCount' 1
+            SetProp $binding 'browserRecoveryTaskId' (Text $TaskId)
             SetProp $binding 'browserFailureClass' ''
             SetProp $binding 'browserToolStatus' 'available'
             SetProp $binding 'browserToolFailureReason' ''
@@ -4704,17 +4743,14 @@ switch ($Action) {
                 Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
                 ForEach-Object { $_.ToLowerInvariant() }
         )
-        if (
-            'opentabs' -notin $lossSources -or
-            'tabs.list' -notin $lossSources
-        ) {
-            throw 'MarkLost 必须同时记录 user.openTabs 和 tabs.list 的真实空结果。'
-        }
-        if (
-            (Text $OpenTabsEvidence) -ne 'absent' -or
-            (Text $TabsListEvidence) -ne 'absent'
-        ) {
-            throw 'MarkLost 只有在 user.openTabs 和 tabs.list 都明确返回 absent 时才允许；empty/unknown 不能当作丢失。'
+        $legacyLost = ('opentabs' -in $lossSources -and 'tabs.list' -in $lossSources -and
+            (Text $OpenTabsEvidence) -eq 'absent' -and (Text $TabsListEvidence) -eq 'absent')
+        $publicLost = ('cua.getstate' -in $lossSources -and 'original-url' -in $lossSources -and
+            $LossObservationCount -ge 2 -and (Text $BrowserToolStatus) -eq 'available' -and
+            (Text $OpenTabsEvidence) -eq 'absent' -and (Text $TabsListEvidence) -in @('', 'unknown', 'absent') -and
+            (Text $OriginalConversationStatus) -eq 'not-found')
+        if (-not $legacyLost -and -not $publicLost) {
+            throw 'MarkLost 需要真实旧双清单，或当前工具清单加原对话地址明确不存在；empty/unknown、登录和工具失败不能当作丢失。'
         }
         With-BindingMutex {
             Assert-NoLease 'MarkLost'
@@ -4722,6 +4758,16 @@ switch ($Action) {
             $binding = Current-Binding $bindings
             if ($null -eq $binding) {
                 throw '找不到当前 thread 绑定。'
+            }
+            if ($publicLost) {
+                if ((Text $DomTargetUrl) -ne (Prop $binding 'conversationUrl') -or
+                    (BoolProp $binding 'pendingReceipt') -or (BoolProp $binding 'auditRisk')) {
+                    throw '原对话地址不匹配或发送落点仍未知，保留原记录，不进入新会话。'
+                }
+                $taskState = Get-TaskState
+                if ((BoolProp $taskState 'reviewCancelled') -or (Prop $taskState 'taskTerminalStatus') -notin @('active', 'frozen')) {
+                    throw '已停止或已完成的任务不能自动新建对话。'
+                }
             }
             $oldTask = ActiveTask $binding
             if (
@@ -4739,6 +4785,7 @@ switch ($Action) {
             SetProp $binding 'replacementRequired' $true
             SetProp $binding 'lossEvidence' (Text $LossEvidence)
             SetProp $binding 'lossEvidenceSources' ($lossSources -join ',')
+            SetProp $binding 'originalConversationStatus' (Text $OriginalConversationStatus)
             SetProp $binding 'lossObservationCount' $LossObservationCount
             SetProp $binding 'lossObservationWindowSeconds' $LossObservationWindowSeconds
             SetProp $binding 'lossEvidenceRecordedAt' (Get-Date).ToString('o')

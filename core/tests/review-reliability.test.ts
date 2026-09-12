@@ -327,6 +327,101 @@ describe("PowerShell entrypoints with synthetic browser evidence (no web sends)"
   }, 20000);
 });
 
+describe("recovery budget belongs to the review task", () => {
+  it("new Claim resets the old budget, retains its audit, and never resets a used current budget", () => {
+    const smoke = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", path.join(repo, "core/tests/fixtures/review-native-smoke.ps1"),
+      "-SkillRoot", bundle, "-StateDir", dir], { encoding: "utf8", timeout: 20000, windowsHide: true });
+    expect(smoke.status, smoke.stderr).toBe(0);
+    const file = path.join(dir, "thread-bindings.json");
+    const oldFile = path.join(dir, "native-smoke.json");
+    fs.writeFileSync(oldFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(oldFile, "utf8")), taskTerminalStatus: "completed" }));
+    const registry = JSON.parse(fs.readFileSync(file, "utf8"));
+    registry.bindings[0].browserRecoveryCount = 1;
+    registry.bindings[0].browserRecoveryStatus = "recovered";
+    fs.writeFileSync(file, JSON.stringify(registry));
+    const next = ["-TaskId", "next-review", "-CodexThreadId", "native-test-thread", "-StateDir", dir];
+    expect(ps("activate_review.ps1", [...next, "-SkillName", "deepseek-consensus-review"]).status).toBe(0);
+    const claim = () => ps("session_binding.ps1", ["-Action", "Claim", ...next]);
+    expect(claim().status).toBe(0);
+    let binding = JSON.parse(fs.readFileSync(file, "utf8")).bindings[0];
+    expect(binding.browserRecoveryCount).toBe(0);
+    expect(binding.browserRecoveryTaskId).toBe("next-review");
+    expect(binding.previousSendAudit.at(-1)).toMatchObject({ browserRecoveryCount: 1, browserRecoveryStatus: "recovered" });
+    // Reproduce an already-claimed 1.19.1 record; only dormant legacy state may migrate.
+    const legacy = JSON.parse(fs.readFileSync(file, "utf8"));
+    legacy.bindings[0].browserRecoveryCount = 1;
+    legacy.bindings[0].browserRecoveryStatus = "";
+    delete legacy.bindings[0].browserRecoveryTaskId;
+    fs.writeFileSync(file, JSON.stringify(legacy));
+    expect(claim().status).toBe(0);
+    binding = JSON.parse(fs.readFileSync(file, "utf8")).bindings[0];
+    expect(binding.browserRecoveryCount).toBe(0);
+    expect(binding.previousRecoveryAudit.at(-1).reason).toBe("legacy-claim-inherited-recovery-budget");
+    const recover = () => ps("session_binding.ps1", ["-Action", "RecoverRuntimeTab", ...next,
+      "-EvidenceSource", "dom", "-BrowserSurface", "codex-in-app-sidebar", "-BrowserTabId", "restored-tab",
+      "-BrowserRuntimeId", "restored-runtime", "-RuntimeEpoch", "2", "-TabMatchCount", "1",
+      "-DomTargetUrl", "https://chat.deepseek.com/a/chat/s/synthetic-session-123", "-DomSessionTitle", "Synthetic test",
+      "-DomMessageMarker", "CODEX-BINDING-native-test-thread", "-DomModel", "网页当前模型（合并升级版）",
+      "-DomReasoning", "深度思考", "-DomSearch", "智能搜索"]);
+    const restored = recover();
+    expect(restored.status, restored.stderr).toBe(0);
+    expect(claim().status).toBe(0);
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).bindings[0].browserRecoveryCount).toBe(1);
+    expect(recover().status).not.toBe(0);
+    // Legacy records with a pending send must not be silently repaired.
+    legacy.bindings[0].pendingReceipt = true;
+    fs.writeFileSync(file, JSON.stringify(legacy));
+    claim();
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).bindings[0].browserRecoveryCount).toBe(1);
+    legacy.bindings[0].pendingReceipt = false;
+    legacy.bindings[0].browserToolStatus = "failed";
+    legacy.bindings[0].lastBrowserToolAt = new Date().toISOString();
+    fs.writeFileSync(file, JSON.stringify(legacy));
+    claim();
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).bindings[0].browserRecoveryCount).toBe(1);
+    legacy.bindings[0].browserToolStatus = "not-started";
+    legacy.bindings[0].lastBrowserToolAt = "";
+    fs.writeFileSync(file, JSON.stringify(legacy));
+    fs.writeFileSync(oldFile, JSON.stringify({ taskId: "native-smoke", taskTerminalStatus: "unknown" }));
+    claim();
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).bindings[0].browserRecoveryCount).toBe(1);
+  }, 30000);
+});
+
+describe("replacement after the original conversation is proven missing", () => {
+  it("accepts current public evidence but refuses unknown sends, wrong URLs, tool failures and stopped tasks", () => {
+    const smoke = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", path.join(repo, "core/tests/fixtures/review-native-smoke.ps1"),
+      "-SkillRoot", bundle, "-StateDir", dir], { encoding: "utf8", timeout: 20000, windowsHide: true });
+    expect(smoke.status, smoke.stderr).toBe(0);
+    const file = path.join(dir, "thread-bindings.json"), taskFile = path.join(dir, "native-smoke.json");
+    const original = fs.readFileSync(file, "utf8"), task = fs.readFileSync(taskFile, "utf8");
+    const mark = (extra: Record<string, string> = {}) => {
+      const params = { Action: "MarkLost", TaskId: "native-smoke", CodexThreadId: "native-test-thread", StateDir: dir,
+        Reason: "Synthetic original URL not found after a successful tab inventory", LossEvidence: "confirmed-absent",
+        LossEvidenceSources: "cua.getState,original-url", LossObservationCount: "2", BrowserToolStatus: "available",
+        OpenTabsEvidence: "absent", TabsListEvidence: "unknown", OriginalConversationStatus: "not-found",
+        DomTargetUrl: "https://chat.deepseek.com/a/chat/s/synthetic-session-123", ...extra };
+      return ps("session_binding.ps1", Object.entries(params).flatMap(([k,v]) => [`-${k}`,v]));
+    };
+    for (const extra of [{ OriginalConversationStatus: "unknown" }, { BrowserToolStatus: "unavailable" },
+      { DomTargetUrl: "https://chat.deepseek.com/a/chat/s/wrong-session" }, { OpenTabsEvidence: "unknown" }]) {
+      expect(mark(extra).status).not.toBe(0);
+      expect(fs.readFileSync(file, "utf8")).toBe(original);
+    }
+    const pending = JSON.parse(original);pending.bindings[0].pendingReceipt = true;
+    fs.writeFileSync(file, JSON.stringify(pending));expect(mark().status).not.toBe(0);
+    fs.writeFileSync(file, original);
+    fs.writeFileSync(taskFile, JSON.stringify({ ...JSON.parse(task), taskTerminalStatus: "cancelled" }));
+    expect(mark().status).not.toBe(0);
+    fs.writeFileSync(taskFile, task);
+    const result = mark();expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout).status).toBe("marked-lost");
+    const after = JSON.parse(fs.readFileSync(file,"utf8")).bindings[0];
+    expect(after.previousConversationUrl).toContain("synthetic-session-123");
+    expect(after.replacementRequired).toBe(true);
+  }, 30000);
+});
+
 describe("public browser tool compatibility evidence", () => {
   it.each(["mcp__cua_repl.js", "mcp__node_repl.js"])("accepts %s only with a successful tool observation", tool => {
     const evidence = { surface:"codex-in-app-sidebar", url:"https://chat.deepseek.com/a/chat/s/synthetic-session-123",

@@ -3,9 +3,11 @@ name: deepseek-independent-review
 description: "通过 DeepSeek 官网做一次独立技术评审。用户显式点名本 Skill，或明确要求 DeepSeek 独立找错、反驳 Codex、比较方案、复核根因或验证 Codex 判断时使用；普通提及 DeepSeek 不触发。固定在 Codex 右侧栏内置浏览器打开 https://chat.deepseek.com/，目标为保持深度思考和智能搜索开启；一个 Codex thread 只绑定一个专用官网会话和 tab，同一 thread 后续 R2…Rn 复用。"
 ---
 
-## 配套更新 1.19.1：浏览器恢复与完整复测
+## 配套更新 1.19.2：原对话恢复与任务计数
 
 浏览器工具、恢复、轮次衔接和计时统一遵循 [references/browser-runtime.md](references/browser-runtime.md)。当前宿主优先使用 mcp__cua_repl；不得导入内部浏览器包或猜测旧接口。旧任务仍复用原官方对话；暂时冻结按仅恢复流程处理。
+
+恢复次数按当前 Task 计算，新 Task 不继承前任务的已用次数，同一 Task 重复 Claim 不清零。原标签关闭先重新打开原官方对话；用户已允许且原对话确实不存在时，按运行规则的真实丢失证据新建，携带已确认摘要。工具断开、登录失效、错误会话或未知发送不能当成原对话丢失。
 
 
 ## 配套更新 1.19.0
@@ -60,7 +62,7 @@ Skill chip 不算执行证据。没有真实页面、绑定和回执时不得写
 ## 浏览器工具硬闸门（防止五分钟不发送）
 
 - 页面操作只能使用 Codex 右侧栏内置浏览器的 `mcp__cua_repl.js`；PowerShell、普通命令、`read_mcp_resource`、文字“继续/下一步”和命令输出都不算浏览器证据，也不能代替点击或发送。
-- 先加载并复用同一个 `iab` 浏览器绑定，再调用一次 `user.openTabs()` 和一次 `tabs.list()` 读取真实标签。只有确认当前 thread 的原 tab 确实不存在，并且已经 `MarkLost` 后，才允许调用一次 `tabs.new()` 建立 replacement tab；禁止在未检查现有 tab 前直接新建。
+- 先按运行规则用当前公开工具读取真实标签清单，复用当前 thread 的专用标签。原标签关闭时先重新打开原官方对话；原对话确实不存在才按授权和丢失证据新建。不在当前宿主强制调用旧 `user.openTabs()`、`tabs.list()` 或 `tabs.new()`。
 - 每次浏览器动作后，下一步必须仍是浏览器工具读取 DOM/截图并核对结果；不得在页面核实到发送之间插入无关扫描、长篇汇报或空转命令。
 - `PrepareSend` 默认只进入 `browserConfirmationStatus=awaiting`，不发送也不启动 deadline。宿主平台确认后调用 `ConfirmBrowserSend`；只有它返回 `sendNow=true` 后才能填入并通过 button 或 Enter 提交，然后回读 DOM。平台确认通过后超过 30 秒仍没有真实发送或回执，立即调用 `FailBrowserWorkflow`。
 - `ConfirmationSource` 只接受 `action-time-user-response` 或浏览器工具真实返回的 `browser-tool-token`；禁止用业务提前授权、Skill chip、文字“继续”或自造 token 冒充宿主平台确认。
@@ -73,7 +75,7 @@ Skill chip 不算执行证据。没有真实页面、绑定和回执时不得写
 浏览器故障分类：
 
 - `runtime-disconnected`、`tool-failed`、`unknown`：进入 `recovery-pending`，保留原 session、原 tab、原 runtime 身份和审计；当前任务冻结，最多允许一次 `RecoverRuntimeTab`。新 Task 只能 `Claim` 后恢复原 runtime，返回 `recover-runtime-required` 时禁止新建 tab。
-  - 只有 `MarkLost` 收到两来源明确 `confirmed-absent`，或明确 `wrong-session` 证据时，才允许清空活动身份、进入 `lost` 并执行一次 replacement bootstrap。
+  - 只有运行规则要求的真实丢失证据齐全且用户已允许，才执行 `MarkLost` 和 replacement；wrong-session 或无法确认身份时停止接管，不当成原对话丢失。
   - 恢复成功后回到 `bound`；恢复失败或达到一次恢复上限时继续冻结并等待明确的丢失证据或用户裁决，不自动循环重连，不重复 Claim，不新建第二个会话。
 
 ### 自动恢复硬规则
@@ -81,9 +83,9 @@ Skill chip 不算执行证据。没有真实页面、绑定和回执时不得写
 - `FailBrowserWorkflow` 返回 `recovery-pending` 时，不得把任务交回用户手动恢复；只要 `iab` 重新可用，当前执行端必须自动沿同一 thread/task 执行一次 `Claim → RecoverRuntimeTab → DOM/Verify`。
 - 浏览器临时断线会把任务暂时写成 `taskTerminalStatus=frozen`、`activationStatus=frozen`，但只要 `nextAction=auto-recover-runtime-tab`，原 Task 的 `Claim` 和 `RecoverRuntimeTab` 属于受限“仅恢复”路径，允许继续执行；这不是恢复发送授权，也不是永久终态。
 - 如果 `FailBrowserWorkflow` 已把当前 Task 暂时冻结并写入 `nextAction=auto-recover-runtime-tab`，恢复动作允许原 TaskId 进入“仅恢复”路径；恢复成功后自动回到 active/activated，再继续页面核验。这个恢复路径不等于发送授权，仍必须重新走发送闸门；有 `pendingReceipt/auditRisk` 时继续禁止重发。
-- 两来源都明确确认原 tab/session 不存在后，当前执行端必须自动完成 `MarkLost → tabs.new(https://chat.deepseek.com/) → BeginBootstrap -ReplaceLost`，随后重新核验当前网页模型、深度思考和智能搜索和当前 thread 身份；不得等待用户说“重新打开”。
+- 已有用户新建授权且原对话明确不存在时，按运行规则用当前公开浏览器 API 完成 `MarkLost → 新建对话 → BeginBootstrap -ReplaceLost`，携带已确认摘要并重新核验两个开关和 thread 身份，不重复询问已有授权。
 - 自动恢复不等于自动发送：恢复页面后仍必须重新取得 DOM 证据，发送继续经过 `PrepareSend → 宿主平台真实确认 → ConfirmBrowserSend`；不得把业务提前授权当成平台发送确认。
-- 每个 thread 最多一次 runtime 恢复、一次 replacement bootstrap；失败后写入明确 `nextAction` 并冻结，禁止循环新建窗口、跨 thread 接管或静默重发。
+- 每个 Task 最多一次 runtime 自动恢复；同一 thread 的新 Task 单独计数。replacement 复用原保护流程，失败后写入明确 nextAction 并冻结，禁止循环新建、跨 thread 接管或静默重发。
 - 只有 `iab` 工具本身不可用、平台发送确认需要用户动作或出现决策僵局时，才可以暂停等待用户；“找不到原窗口”本身不再要求用户手动处理。
 
 ### `lost` 绑定优先复用已有官方会话
@@ -92,7 +94,7 @@ Skill chip 不算执行证据。没有真实页面、绑定和回执时不得写
 - 执行端随后必须在 Codex 右侧栏用 `mcp__cua_repl.js` 核验当前官方 DeepSeek 会话的真实 URL、标题、当前网页模型、深度思考和智能搜索、DOM marker、tab 和 runtime，再调用 `session_binding.ps1 -Action BindExistingOfficialSession`。这个动作不是“接管当前活动 tab”，而是把已核验的官方 session/tab/runtime 绑定回当前 thread。
 - `BindExistingOfficialSession` 只允许当前 thread 的 `lost/cancelled/terminated` 绑定，或已经终态的旧 Task；如果旧 Task 仍在运行、session/tab/runtime 与当前 bound 绑定不一致、页面不是官网或模式未开启，必须拒绝。
 - 接管成功后必须把旧 Task 的 `pendingReceipt`、`auditRisk`、指纹、确认和重试记录留在 `previousSendAudit`，清空当前发送闸门并同步当前 Task；不能把旧回执当成新消息已发送，也不能自动重发。
-- 只有真实 DOM 核验失败、当前官方 session 无法证明，或两个来源明确 `confirmed-absent` 后，才允许走 `MarkLost → tabs.new → BeginBootstrap -ReplaceLost`。`tabs.list()` 返回 `empty/unknown` 不能跳过绑定核验或直接新建窗口。
+- DOM 核验失败、官方 session 无法证明、清单 empty/unknown 都不算明确丢失；先按运行规则恢复原地址。原对话明确不存在且已有授权时才进入 replacement。
 
 ### 失败流程和崩溃恢复
 
@@ -110,15 +112,15 @@ Skill chip 不算执行证据。没有真实页面、绑定和回执时不得写
 BeginBootstrap → AcquireBrowserLease → DOM → VerifyBootstrap → PrepareSend
 → Codex 平台确认通过后 ConfirmBrowserSend
 → 发送完整评审消息；没有稳定 sessionId 时消息必须含 thread marker
-→ 回读官网 sessionId、可用时的 marker、消息落点、openTabs 和 tabs.list
-→ CompleteBootstrap → RecordSendOutcome（三来源证据）→ ReleaseBrowserLease
+→ 回读官网 sessionId、可用时的 marker、消息落点和当前公开工具的标签清单
+→ CompleteBootstrap → RecordSendOutcome（DOM与真实清单，旧字段按运行规则映射）→ ReleaseBrowserLease
 ```
 
 已有绑定：新 TaskId 先 Claim，不新建会话。如果旧绑定只是被过期 lease 清理误标为 `lost`，先核验原 sessionId、可用时的 marker、当前网页模型、深度思考和智能搜索，再调用 `RecoverExpiredLeaseBinding` 复用原会话，禁止直接新建第二个 DeepSeek 会话。
 
-如果在 Codex 右侧栏找不到当前 thread 原来绑定的 session、可用时的 marker 或专用 tab，先确认不是另一个 thread 的窗口；确认原窗口确实不存在后，先 `MarkLost` 保留旧绑定审计，再在 Codex 右侧栏新建一个 DeepSeek 官网窗口，使用新 tab/runtime 执行 `BeginBootstrap -ReplaceLost`。新窗口必须重新确认当前网页模型、深度思考和智能搜索和正式会话身份；没有稳定 sessionId 时还要核对当前 thread marker，不能接管其他 thread 的会话。
+原标签关闭先确认没有重复标签，再重新打开保存的原对话地址。只有用户已允许、原对话明确不存在且没有未知发送时，才按运行规则执行 `MarkLost → BeginBootstrap -ReplaceLost`；新对话重新核对开关、正式身份和当前 thread，携带已确认摘要。
 
-“找不到原窗口”与“原窗口只是暂时未读到”要分开处理：能通过真实 DOM 核验原 session 和可用时的 marker 就复用；无法核验且页面确实没有原窗口才新建。浏览器 runtime 重建使用 `RecoverRuntimeTab`；已是同一官网会话但来源不是右侧栏时使用 `MigrateToInAppSidebar`。旧本机 Harness、旧规则或损坏绑定必须 `MarkLost` 后在官网右侧栏重新 bootstrap，不能静默迁移。
+原标签不存在不等于原对话不存在。浏览器控制连接重建使用 `RecoverRuntimeTab`；同一官网对话迁移到右侧栏使用 `MigrateToInAppSidebar`。旧规则或损坏绑定保留审计，先核对原官方对话，不能静默迁移或把无法读取当成丢失。
 
 单纯过期的浏览器 lease，如果没有 `pendingReceipt` 或其他未确认发送风险，按 `expired-lease-safe-release` 自动清理并恢复；只有存在待回执、unknown/wrong-session/not-found 等风险时才标记审计风险并冻结。
 
@@ -172,7 +174,7 @@ DeepSeek必须根据本轮事实重新推导，不能只附和 Codex，也不能
 - `unknown` 只能重新核验原 session/tab/可用时的 marker：DOM `present` 且至少一个标签来源 confirmed 时记录 `confirmed`；只有 DOM `absent` 且有明确负证据才可 `ResolvePendingSend -ReceiptStatus not-found`；`empty`/`unknown` 不等于 `absent`，仍无法判断就冻结。
 - `PrepareSend` 计算稳定 SHA-256 `SendIdempotencyKey`；重试沿用同一 key，只生成新的 `sendAttemptId`。该 key 只防本地误重发，不代表服务端 exactly-once。
 - 输入框定位或发送控件第一次失败时，不得让用户手动粘贴；先重新读取 DOM 和消息落点。只有 DOM 明确确认目标消息不存在、首轮发送已超过 `sendDeadlineAt` 时，才能调用 `RetrySendAfterTimeout`，最多重试 2 次。页面显示消息存在或无法确认时冻结，不把发送责任转给用户。
-- `MarkLost` 只有在 `LossEvidence=confirmed-absent`、至少一次观测、并同时有 `LossEvidenceSources=openTabs,tabs.list` 双来源空结果时才允许；浏览器工具失败必须走 `FailBrowserWorkflow`，不能误标丢失。
+- `MarkLost` 按运行规则接受当前 `cua.getState,original-url` 的真实丢失证据，至少两次观察且原对话明确不存在。旧双清单路径仅供实际提供旧接口的宿主使用。工具失败走 `FailBrowserWorkflow`，不能误标丢失。
 - 旧 `confirmed` 但缺 DOM/openTabs/tabs.list 的历史任务，普通状态更新不能强行改写；只能明确调用 `update_review_status.ps1 -FinalizeLegacyAudit` 转成只读历史终态。迁移必须保留 `legacy*` 证据缺口、`auditRisk=true`，撤销发送授权，禁止重发。
 
 ### 核实后立即发送
