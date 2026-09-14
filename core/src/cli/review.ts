@@ -103,7 +103,7 @@ export function registerReviewCommands(program: Command): void {
   };
   const routing = (cmd: Command): Command => cmd.option("--provider <name>", "deepseek | chatgpt（gpt 也可）")
     .option("--mode <mode>", "single | consensus").option("--task <id>", "恢复已确认属于本任务的旧评审")
-    .option("--request <text>", "本次渠道或评审方式指令，不保存原始文本");
+    .option("--request <text>", "原始用户需求；与 --provider 核对渠道，不保存原始文本");
   action(routing(command("resolve", "只读查看本次将使用的渠道和依赖")), opts => {
     const route = routed(opts);
     const payload = { ok: true, reviewProvider: route.provider, reviewMode: route.mode, resumeTaskId: route.taskId ?? null,
@@ -226,15 +226,18 @@ export function registerReviewCommands(program: Command): void {
   action(command("cancel", "停止当前评审，保留历史和浏览器会话"), async opts => {
     const s = current(opts);
     if (isReviewTerminal(s)) { output(s, opts); return; }
-    let note = "已停止，不继续发送或修改";
+    // Persist the local stop before any remote work. An unavailable browser or
+    // failed remote cancellation must never let stale review evidence reopen it.
+    const stopped = save(s, { ...s, phase: "CANCELLED", reviewerConsensus: false, codexConsensus: false,
+      blockedReason: "", nextAction: "已停止，不继续发送或修改" });
     if (s.reviewProvider === "deepseek") {
       try { await runDeepseek(s, "cancel"); } catch {
-        output(save(s, { ...s, phase: "BLOCKED", reviewerConsensus: false, codexConsensus: false,
-          blockedReason: "专用 Skill 取消未确认", nextAction: "不再发送或执行；先核对原绑定的取消状态" }), opts);
+        output(save(stopped, { ...stopped, blockedReason: "本地评审已停止；专用 Skill 取消尚未确认",
+          nextAction: "不再发送或执行；仅核对原绑定的取消状态，不恢复本次评审" }), opts);
         process.exitCode = 1; return;
       }
     }
-    output(save(s, { ...s, phase: "CANCELLED", reviewerConsensus: false, codexConsensus: false, nextAction: note }), opts);
+    output(stopped, opts);
   });
   action(command("execute", "核对评审门槛后记录执行开始；计划模式下生成普通执行任务转交信息")
     .option("--plan-mode-detected", "当前任务被锁在只做计划方案，需要转交普通执行任务", false)

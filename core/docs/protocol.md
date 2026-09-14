@@ -13,6 +13,14 @@ protocol. Do not claim that a named model was used unless the UI makes it
 observable. If GPT-5.6 Sol and Pro are visible, the user may select them;
 otherwise use the highest model and reasoning strength actually available.
 
+## Provider selection and failure boundary
+
+1. `Codex with ChatGPT` / `codex-with-chatgpt` names the Skill, not the reviewer. New reviews default to DeepSeek unless the user separately and explicitly selects GPT/ChatGPT; resumed tasks keep the saved provider.
+2. CLI `review resolve` / `review start` must receive the current user's original request verbatim in `--request`, or the exact contents of a local file holding that request. Do not invent “使用 GPT 评审”, summarize that routing input, or infer `--provider chatgpt` from the Skill name. This local CLI input is not the wire `REQUEST` section: the web reviewer still receives only bounded summaries.
+3. For a task requiring review before changes, authorization/connection failure, `canExecute=false`, `sent=false`, or a missing valid review closes execution. Do not modify business files or system configuration; pause for authorized read-only diagnosis. Do not cancel the review, create a replacement task, or switch to a fast flow to bypass the gate. Only the user's explicit waiver or change of requirements may change that agreement. A sent message is not consensus.
+4. `Codex auth token is unavailable` means the Codex host did not provide browser-control authorization; it does not establish website login failure, exhausted quota, or missing Skill dependencies. For ordinary business tasks, do not automatically change model provider, `requires_openai_auth`, or `auth.json`, exit/restart Codex, or bypass authorization with another browser or HTTP/CDP. When the user explicitly authorizes diagnosis and repair, inspect backups, official authentication precedence, and safe local validation before evidence-based repair within that scope. Do not disclose credentials or waive the original business review gate. Verify recovery with the actual host browser tool, not file presence.
+5. These Skill/CLI gates do not sandbox arbitrary shell commands. The executor checks the gate before writes and follows higher-priority host tool and permission constraints for diagnosis, recovery, and handoff.
+
 ## States
 
 ```
@@ -69,6 +77,9 @@ Keep messages < 1 KB. No diffs, no logs, no file bodies.
 ### Plan-mode fallback
 
 The C2C protocol does not require the Codex client to be in its UI plan mode.
+Use the fallback below only after the execution gate passes and the host tool permits it.
+If creating a new task requires an explicit user request, general auto-execution
+authorization is not a substitute; preserve the current task and report the constraint.
 If the client displays a raw `<proposed_plan>` wrapper or produces only plan-mode
 output for two consecutive checks, Codex must preserve the current summary,
 workspace, connector, and history. Run `c2c review execute --plan-mode-detected

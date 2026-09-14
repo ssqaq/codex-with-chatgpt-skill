@@ -74,9 +74,25 @@ describe("review provider selection", () => {
     ["使用 ChatGPT 多轮评审后再修改。", "chatgpt"],
     ["让 DeepSeek 多轮复审后再修改代码", "deepseek"],
     ["Use GPT to review this plan", "chatgpt"],
+    ["使用 **ChatGPT** 评审", "chatgpt"],
+    ["使用 `GPT` 评审", "chatgpt"],
+    ["用 **DeepSeek** 多轮评审", "deepseek"],
+    ["请用网页版 ChatGPT 评审这个问题", "chatgpt"],
+    ["请用网页 ChatGPT 评审这个问题", "chatgpt"],
+    ["使用官网的 ChatGPT 评审这个问题", "chatgpt"],
+    ["请用官方网页版 ChatGPT 评审这个问题", "chatgpt"],
+    ["请用ChatGPT网页版评审这个问题", "chatgpt"],
+    ["请用 [ChatGPT](https://chatgpt.com/) 评审这个问题", "chatgpt"],
+    ["请用网页版 [**ChatGPT**](https://chatgpt.com/) 评审这个问题", "chatgpt"],
+    ["请用 [GPT](https://chatgpt.com/ \"官网\") 评审这个问题", "chatgpt"],
+    ["请用官网 [DeepSeek](https://chat.deepseek.com/) 多轮评审", "deepseek"],
+    ["让官方网页DeepSeek多轮评审", "deepseek"],
+    ["这次交给 ChatGPT 评审", "chatgpt"],
+    ["这次交给网页版 [ChatGPT](https://chatgpt.com/) 评审", "chatgpt"],
   ] as const)("recognizes an explicit reviewer: %s", (request, expected) => {
     expect(requestProvider(request)).toBe(expected);
     expect(selectReviewer({ request, defaultProvider: "deepseek" })).toBe(expected);
+    expect(selectReviewer({ request, explicit: expected, defaultProvider: "deepseek" })).toBe(expected);
   });
 
   it("uses the configured default when the request only names the skill", () => {
@@ -84,6 +100,50 @@ describe("review provider selection", () => {
     expect(requestProvider(request)).toBeUndefined();
     expect(selectReviewer({ request, defaultProvider: "deepseek" })).toBe("deepseek");
     expect(selectReviewer({ request, defaultProvider: "chatgpt" })).toBe("chatgpt");
+  });
+
+  it.each([
+    "使用 Codex with ChatGPT 帮我修复这个问题并测试。",
+    "使用 codex-with-chatgpt，多轮评审后再修改代码。",
+    "使用 **Codex with ChatGPT** 帮我分析。",
+    "使用网页版 Codex with ChatGPT 帮我分析。",
+    "使用 [Codex with ChatGPT](https://example.com/skill) 帮我分析。",
+    "使用 [技能文档](https://example.com/?q=用ChatGPT) 帮我分析。",
+  ])("does not let a CLI override turn the skill name into ChatGPT: %s", request => {
+    expect(requestProvider(request)).toBeUndefined();
+    expect(() => selectReviewer({ request, explicit: "chatgpt", defaultProvider: "deepseek" }))
+      .toThrow(/原始需求解析/);
+    expect(selectReviewer({ request, explicit: "deepseek", defaultProvider: "deepseek" })).toBe("deepseek");
+  });
+
+  it("validates the original request even when a CLI provider was supplied", () => {
+    expect(() => selectReviewer({ request: "用 DeepSeek 评审", explicit: "chatgpt", defaultProvider: "deepseek" }))
+      .toThrow(/原始需求解析/);
+    expect(() => selectReviewer({ request: "用 GPT 评审", explicit: "deepseek", defaultProvider: "deepseek" }))
+      .toThrow(/原始需求解析/);
+    expect(() => selectReviewer({ request: "使用 DeepSeek 评审，用 ChatGPT 复审。", explicit: "chatgpt", defaultProvider: "deepseek" }))
+      .toThrow(/一个评审渠道/);
+    expect(() => selectReviewer({ request: "用 GPT 评审", explicit: "deepseek", saved: "deepseek", defaultProvider: "deepseek" }))
+      .toThrow(/中途换渠道/);
+  });
+
+  it("keeps matching user choices and provider-only CLI calls compatible", () => {
+    expect(selectReviewer({ request: "用 GPT 评审", explicit: "gpt", defaultProvider: "deepseek" })).toBe("chatgpt");
+    expect(selectReviewer({ request: "使用 ChatGPT 多轮评审", explicit: "chatgpt", defaultProvider: "deepseek" })).toBe("chatgpt");
+    expect(selectReviewer({ explicit: "chatgpt", defaultProvider: "deepseek" })).toBe("chatgpt");
+    expect(selectReviewer({ request: "继续", explicit: "chatgpt", saved: "chatgpt", defaultProvider: "deepseek" })).toBe("chatgpt");
+  });
+
+  it.each(["不要用 ChatGPT 评审", "不用 ChatGPT 评审", "别用 ChatGPT 评审"])("does not turn an excluded reviewer into a choice: %s", request => {
+    expect(requestProvider(request)).toBeUndefined();
+    expect(selectReviewer({ request, defaultProvider: "deepseek" })).toBe("deepseek");
+    expect(() => selectReviewer({ request, explicit: "chatgpt", defaultProvider: "deepseek" })).toThrow();
+    expect(() => selectReviewer({ request, defaultProvider: "chatgpt" })).toThrow(/明确排除/);
+  });
+
+  it("accepts an unambiguous alternative but rejects simultaneous use and exclusion", () => {
+    expect(selectReviewer({ request: "不用 DeepSeek，这次交给 ChatGPT 评审", explicit: "chatgpt", defaultProvider: "deepseek" })).toBe("chatgpt");
+    expect(() => requestProvider("不要用 ChatGPT，这次交给 ChatGPT 评审")).toThrow(/同时要求/);
   });
 
   it("preserves the reviewer of a resumed task even if the default changed", () => {
@@ -102,6 +162,10 @@ describe("review provider selection", () => {
     expect(() => requestProvider("使用 DeepSeek 评审，用 ChatGPT 复审。"))
       .toThrow(/一个评审渠道/);
     expect(requestProvider("使用 GPT 评审，让 ChatGPT 做复核。")).toBe("chatgpt");
+    expect(() => requestProvider("请用网页版 ChatGPT 评审，用官网 DeepSeek 复审。"))
+      .toThrow(/一个评审渠道/);
+    expect(() => selectReviewer({ request: "请用 [ChatGPT](https://chatgpt.com/) 评审，用 [DeepSeek](https://chat.deepseek.com/) 复审。", explicit: "chatgpt", defaultProvider: "deepseek" }))
+      .toThrow(/一个评审渠道/);
   });
 });
 

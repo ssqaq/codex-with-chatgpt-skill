@@ -1,10 +1,20 @@
 # Coding and consensus protocol workflow
 
-Read this reference for an actual coding task, text-only multi-round consensus review, execution checkpoints, self-checks, and ChatGPT review. The wire message schema is maintained separately in [`core/docs/protocol.md`](../core/docs/protocol.md).
+Read this reference for an actual coding task, text-only multi-round consensus review, execution checkpoints, self-checks, and review by DeepSeek or explicitly selected ChatGPT. The wire message schema is maintained separately in [`core/docs/protocol.md`](../core/docs/protocol.md).
 
 ## Workflow: coding task（"使用 Codex with ChatGPT 完成 XXX"）
 
 Review-channel selection is saved per task. New review tasks default to DeepSeek; explicit GPT/ChatGPT instructions select the existing ChatGPT path. Never mix a DeepSeek task with a ChatGPT task.
+
+1. `Codex with ChatGPT` / `codex-with-chatgpt` is the Skill name, not an explicit ChatGPT provider selection. “使用 Codex with ChatGPT 完成 XXX” defaults to DeepSeek for a new review; a saved task keeps its existing provider.
+2. Pass the current user's original request verbatim to `c2c review resolve --request <text>` and `c2c review start --request <text>`, or read that exact text from a local file before passing it. Never fabricate “使用 GPT 评审”, substitute a summarized request, or add `--provider chatgpt` merely because the Skill name contains ChatGPT. The CLI request is local routing input; only bounded summaries go to the web reviewer.
+3. Route DeepSeek tasks through the existing DeepSeek Skill, real-page evidence, and send/receipt scripts in [reliability.md](reliability.md). The numbered ChatGPT connector workflow below is only for tasks actually routed to ChatGPT, not a reason to change provider. For screenshots on the default DeepSeek path, Codex reads the authorized image locally and sends only verified visual facts, uncertainties, and a short text summary; MCP `read_image` belongs only to an explicitly selected ChatGPT connection that actually exposes it. Do not switch provider, upload images, or call a legacy vision Skill because a screenshot is present.
+
+## 评审失败不能跳过执行门槛
+
+用户明确要求评审后修改时，授权/连接失败、`canExecute=false`、`sent=false` 或缺少有效回复都意味着暂停；不修改业务文件或系统配置。只做获准的只读诊断，保留原任务和回执，不自行取消评审、创建替代任务或改走快速流程。只有用户明确放弃评审或改变约定，才能按新范围继续；发送成功也不能替代有效评审和双方共识。
+
+`Codex auth token is unavailable` 表示 Codex 宿主未提供浏览器控制所需授权，不是网页未登录、额度耗尽或 Skill 缺依赖的证据。一般业务任务中不自动修改 model provider、`requires_openai_auth` 或 `auth.json`，不退出/重启 Codex，不改用其他浏览器或 HTTP/CDP 绕开授权。用户明确授权诊断修复时，可在该修复范围内检查备份、官方认证优先级和安全的本地验证后按证据修复，不输出凭据，不改变原业务任务评审门槛。宿主工具限制优先；Skill/CLI 不能强制拦截任意 shell，执行者必须在写入前复核门槛。
 
 Protocol states sent to ChatGPT: INIT → (CONSENSUS_PLAN ↔ CONSENSUS_REVIEW → CONSENSUS)? → PLAN → EXECUTING → EXECUTED → REVIEW → (PLAN | DONE | BLOCKED).
 Local checkpoint states (session only, never a ChatGPT `STATE:` line):
@@ -23,7 +33,7 @@ ChatGPT's replies are expected to be substantive (see step 3). Docs: `docs/proto
 当前会话处于只出方案模式，自动切换到普通执行流程。
 ```
 
-随后保留当前方案摘要、工作区、连接器和旧会话历史，先运行 `c2c review execute
+以下续接只在执行门槛已通过且宿主工具允许时使用；若工具要求用户明确请求新建任务，不以一般“自动执行”要求替代。随后保留当前方案摘要、工作区、连接器和旧会话历史，先运行 `c2c review execute
 --plan-mode-detected --json` 保存转交状态，再在同一工作区和连接器中启动普通执行续接；
 当前任务无法切换时，使用 Codex 任务工具创建普通执行任务并发送 HANDOFF。创建成功后
 运行 `c2c review execute --thread <原任务号> --execution-thread <新任务号>` 记录真实接手
@@ -62,6 +72,8 @@ ChatGPT's replies are expected to be substantive (see step 3). Docs: `docs/proto
 任何测试、复核或页面检查失败，都必须回到对应阶段修复并重新验证；在验证通过前
 不得回显“已完成”，也不得发送同步或发布回执。多轮评审继续使用本文件后面的轮次
 格式，不与普通阶段计数混用。
+
+## 已明确选择 ChatGPT 时的连接器流程
 
 0. `c2c tunnel status -w <workspace> --json`. If `needsChoice`, follow
    **Connection choice** first (existing installs: ask once, then remember).
