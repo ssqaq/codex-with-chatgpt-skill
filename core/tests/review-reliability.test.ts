@@ -341,7 +341,10 @@ describe("PowerShell entrypoints with synthetic browser evidence (no web sends)"
     expect(again.status, again.stderr).toBe(0);
     expect(JSON.parse(fs.readFileSync(registryFile, 'utf8')).bindings[0].browserRecoveryTotalCount).toBe(2);
     expect(cli("sync").session.phase).toBe("WAITING");
-  }, 20000);
+  // This composite integration test starts many real Node/PowerShell processes.
+  // Windows CI exceeded the old 20s total (21.464s); keep each child deadline
+  // and every product polling/recovery assertion unchanged.
+  }, 60_000);
 });
 
 describe("recovery budget belongs to the review task", () => {
