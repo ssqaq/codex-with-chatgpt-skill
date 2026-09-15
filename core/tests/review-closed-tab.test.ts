@@ -48,7 +48,7 @@ it('restores a proven closed tab without resetting runtime budget, rejecting uns
   const again=ps(path.join(bundle,'scripts/session_binding.ps1'),second);expect(again.status,again.stderr).toBe(0);
   expect(JSON.parse(fs.readFileSync(file,'utf8')).bindings[0].closedTabRestoreCount).toBe(2);
  } finally {cleanup(dir);}
-},30000);
+},120000);
 it('accepts cua.getTab closed-tab evidence only when inventory is unavailable and the old tab is not-found',()=>{
  const dir=makeTmpDir('closed-tab-gettab');
  const ps=(file:string,args:string[])=>spawnSync('pwsh',['-NoProfile','-NonInteractive','-File',file,...args],{encoding:'utf8',windowsHide:true,timeout:20000});
@@ -76,4 +76,4 @@ it('accepts cua.getTab closed-tab evidence only when inventory is unavailable an
   expect(restored.browserTabId).toBe('restored');
   expect(restored.lastClosedTabRestoreFingerprint).toBe(createHash('sha256').update('synthetic-tab|official-chat:synthetic-session-123|https://chat.deepseek.com/a/chat/s/synthetic-session-123|closed-tab','utf8').digest('hex'));
  } finally {cleanup(dir);}
-},30000);
+},120000);

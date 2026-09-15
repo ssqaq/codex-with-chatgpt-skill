@@ -6,7 +6,8 @@
 2. **同一关闭标签只恢复一次**：关闭标签指纹 = SHA-256(oldTabId|sessionId|url|closed-tab)，同一指纹最多恢复一次；找不到原对话就暂停，不自动新建官网会话。
 3. **发送态复位更安全**：sendOwnerTaskId 为空且还有残留发送态时暂停人工核对，不自动清闸门；ForceTerminate 遇到 pendingReceipt 或 auditRisk 时拒绝。
 4. **新增回归测试**：关闭标签指纹、空 sendOwner 暂停、pending ForceTerminate 拒绝。
-5. **复测结果**：真实 DeepSeek 4 轮评审 C1 REVISE → C2 REVISE → C3 CONSENSUS → C4 专项复核 CONSENSUS；509 项测试通过；类型检查和构建通过。
+5. **Ubuntu 测试超时**：关闭标签恢复测试在 Linux 上启动 PowerShell 较慢，单项超时从 30 秒调整到 120 秒，避免自动测试误失败。
+6. **复测结果**：真实 DeepSeek 4 轮评审 C1 REVISE → C2 REVISE → C3 CONSENSUS → C4 专项复核 CONSENSUS；本机 509 项测试通过；类型检查和构建通过。
 
 ## 1.19.7（2026-09-15）
 
