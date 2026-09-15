@@ -227,6 +227,52 @@ describe("DeepSeek native-skill evidence projection", () => {
       denied(syncDeepseek(session, source, [binding]));
     });
 
+  it("reconciles a stale task receipt mirror from a newer, matching confirmed binding", () => {
+    const { session, source, binding } = fixture();
+    source.pendingReceipt = "true";
+    source.auditRisk = "true";
+    source.resendBlocked = "true";
+    source.lastReceiptStatus = "unknown";
+    source.sendPhase = "prepared";
+    source.bindingRevision = "3";
+    binding.bindingRevision = 4;
+    source.updatedAt = "2026-09-12T00:00:00.000Z";
+    binding.updatedAt = "2026-09-12T00:00:01.000Z";
+    const result = syncDeepseek(session, source, [binding]);
+    expect(result.phase).toBe("READY");
+    expect(result.receiptStatus).toBe("confirmed");
+    expect(result.replyReceived).toBe(true);
+    expect(canExecuteReview(result)).toBe(true);
+  });
+
+  it("does not reconcile a stale receipt flag when the binding fingerprint or audit mode conflicts", () => {
+    const { session, source, binding } = fixture();
+    source.pendingReceipt = "true";
+    source.bindingRevision = "3";
+    binding.bindingRevision = 4;
+    source.updatedAt = "2026-09-12T00:00:00.000Z";
+    binding.updatedAt = "2026-09-12T00:00:01.000Z";
+    source.lastMessageFingerprint = "different-fingerprint";
+    denied(syncDeepseek(session, source, [binding]));
+    source.lastMessageFingerprint = binding.lastMessageFingerprint;
+    source.auditOnly = "true";
+    denied(syncDeepseek(session, source, [binding]));
+  });
+
+  it.each(["pendingReceipt", "auditRisk", "resendBlocked", "auditOnly"]) (
+    "does not reconcile when the newer binding itself carries %s", flag => {
+      const { session, source, binding } = fixture();
+      source.pendingReceipt = "true";
+      source.lastReceiptStatus = "unknown";
+      source.sendPhase = "prepared";
+      source.bindingRevision = "3";
+      binding.bindingRevision = 4;
+      source.updatedAt = "2026-09-12T00:00:00.000Z";
+      binding.updatedAt = "2026-09-12T00:00:01.000Z";
+      binding[flag] = true;
+      denied(syncDeepseek(session, source, [binding]));
+    });
+
   it.each(["lastReceiptStatus", "domMessagePresence", "lastOpenTabsEvidence", "submissionStatus", "browserConfirmationStatus"]) (
     "never treats a partial receipt as proof when %s is missing", field => {
       const { session, source, binding } = fixture();

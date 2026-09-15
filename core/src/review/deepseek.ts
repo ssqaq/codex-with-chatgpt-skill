@@ -134,6 +134,32 @@ function confirmedReceipt(raw: Raw): boolean {
     raw.lastOpenTabsEvidence !== "wrong-session" && raw.lastTabsListEvidence !== "wrong-session" &&
     !!text(raw.lastMessageFingerprint);
 }
+function staleReceiptFlags(raw: Raw): boolean {
+  return ["pendingReceipt", "auditRisk", "resendBlocked"].some(k => risk(raw[k]));
+}
+function canReconcileConfirmedBinding(s: ReviewSession, source: Raw, binding: Raw): boolean {
+  // A binding may be used to repair only a short-lived task-mirror lag. The
+  // binding must prove the same task, conversation, browser identity and
+  // message, and it must be newer than the stale task mirror. This never
+  // overrides auditOnly, recovery, deadlock or a conflicting identity.
+  if (risk(source.auditOnly) || risk(binding.auditOnly) || !staleReceiptFlags(source) ||
+      staleReceiptFlags(binding) || !confirmedReceipt(binding)) return false;
+  if (text(binding.status) !== "bound" || text(binding.sessionBindingStatus) === "lost" ||
+      (text(binding.taskTerminalStatus) && text(binding.taskTerminalStatus) !== "active")) return false;
+  if ((text(binding.activeTaskId) || text(binding.taskId)) !== s.taskId || text(binding.owner) !== s.threadId || text(binding.sendOwnerTaskId) !== s.taskId) return false;
+  if (text(source.sendOwnerTaskId) !== s.taskId || text(source.lastMessageFingerprint) !== text(binding.lastMessageFingerprint)) return false;
+  for (const key of ["deepseekSessionId", "browserTabId", "browserRuntimeId", "conversationUrl", "domMessageMarker"]) {
+    if (text(source[key]) !== text(binding[key])) return false;
+  }
+  const sourceKey = text(source.sendIdempotencyKey), bindingKey = text(binding.sendIdempotencyKey);
+  if (sourceKey && bindingKey && sourceKey !== bindingKey) return false;
+  const sourceRevision = integer(source.bindingRevision), bindingRevision = integer(binding.bindingRevision);
+  if (sourceRevision === null || bindingRevision === null || bindingRevision < 1 || sourceRevision >= bindingRevision) {
+    const sourceAt = Date.parse(text(source.updatedAt)), bindingAt = Date.parse(text(binding.updatedAt));
+    if (!Number.isFinite(sourceAt) || !Number.isFinite(bindingAt) || bindingAt <= sourceAt) return false;
+  }
+  return true;
+}
 function conversation(raw: Raw, threadId: string): string | null {
   const url = text(raw.conversationUrl), session = text(raw.deepseekSessionId);
   try {
@@ -174,8 +200,9 @@ export function syncDeepseek(s: ReviewSession, source: Raw | null, bindings: Raw
     return markTiming(block("浏览器暂时断开，保留当前轮次并恢复原任务", "auto-recover-runtime-tab"), "recoveryStartedAt", text(source.lastBrowserToolAt) || new Date().toISOString());
   }
   if (source.activationStatus !== "activated" || source.taskTerminalStatus !== "active" || risk(source.reviewCancelled)) return block("DeepSeek 评审未激活、已暂停或已结束");
+  const bindingReconcilesSource = b ? canReconcileConfirmedBinding(s, source, b) : false;
   const unsafe = [source, ...(b ? [b] : [])].some(x => ["pendingReceipt", "auditRisk", "resendBlocked", "auditOnly"].some(k => risk(x[k])));
-  if (unsafe) return { ...block("发送回执尚未确认或存在审计风险，不能重复发送", "reconcile-pending-receipt"), receiptStatus: "unknown" };
+  if (unsafe && !bindingReconcilesSource) return { ...block("发送回执尚未确认或存在审计风险，不能重复发送", "reconcile-pending-receipt"), receiptStatus: "unknown" };
   if (!b || b.status === "bootstrap-pending") return { ...base, phase: "PREPARING", blockedReason: "", nextAction: text(source.nextAction).slice(0, 500) || "prepare-browser-binding" };
   if (b.status !== "bound" || source.sessionBindingStatus !== "bound") return block("DeepSeek 原绑定尚未恢复");
   if ((text(b.activeTaskId) || text(b.taskId)) !== s.taskId || b.owner !== s.threadId || source.sessionOwner !== s.threadId) return block("DeepSeek 绑定属于其他任务");
@@ -183,13 +210,15 @@ export function syncDeepseek(s: ReviewSession, source: Raw | null, bindings: Raw
   const url = conversation(source, s.threadId);
   if (!url || conversation(b, s.threadId) !== url) return block("DeepSeek 会话地址与官方会话身份不一致");
   if (["deepseekSessionId", "browserTabId", "browserRuntimeId"].some(k => !text(b[k]) || source[k] !== b[k]) ||
-      ["runtimeEpoch", "bindingRevision"].some(k => integer(b[k]) === null || integer(b[k])! < 1 || integer(source[k]) !== integer(b[k]))) return block("DeepSeek 会话或浏览器身份不一致");
+      integer(b.runtimeEpoch) === null || integer(b.runtimeEpoch)! < 1 || integer(source.runtimeEpoch) !== integer(b.runtimeEpoch)) return block("DeepSeek 会话或浏览器身份不一致");
+  if (integer(b.bindingRevision) === null || integer(b.bindingRevision)! < 1 ||
+      (integer(source.bindingRevision) !== integer(b.bindingRevision) && !bindingReconcilesSource)) return block("DeepSeek 会话或浏览器身份不一致");
   const duplicate = bindings.some(other => other.codexThreadId !== s.threadId && !["lost", "cancelled", "terminated", "completed"].includes(text(other.status)) &&
     (other.deepseekSessionId === b.deepseekSessionId || (other.browserRuntimeId === b.browserRuntimeId && other.browserTabId === b.browserTabId)));
   if (duplicate) return block("DeepSeek 会话被其他 Codex 任务占用");
   base.chatUrl = url; base.modelName = text(b.model); base.reasoningStrength = text(b.reasoning);
   const fingerprint = text(b.lastMessageFingerprint);
-  const receipt = confirmedReceipt(b) && confirmedReceipt(source) && source.lastMessageFingerprint === fingerprint &&
+  const receipt = confirmedReceipt(b) && (confirmedReceipt(source) || bindingReconcilesSource) && source.lastMessageFingerprint === fingerprint &&
     b.sendOwnerTaskId === s.taskId && source.sendOwnerTaskId === s.taskId;
   if (!receipt) return { ...block("发送回执尚未确认，不能重复发送", "reconcile-pending-receipt"), receiptStatus: "unknown" };
   if (s.evidenceFingerprint === fingerprint && s.evidenceRound !== undefined && s.evidenceRound !== round) return block("新轮次仍引用上一轮发送回执，不能认定已收到本轮回复");

@@ -1512,7 +1512,8 @@ function Assert-Unique(
             if ($existingRuntime -eq $runtimeValue) {
                 throw '右侧栏 runtime + tab 已属于另一个 Codex thread。'
             }
-            throw '同一个右侧栏 tab ID 在不同 runtime 中出现跨 thread 冲突，必须换用有唯一证据的 tab。'
+            # browserTabId 只在 browserRuntimeId 内唯一。新的 runtime 可以重新使用数字 tab ID；
+            # 两个 runtime 都有完整身份时继续检查 session/marker，不把数字复用误判为跨 thread 冲突。
         }
 
         $existingRuntime = Prop $binding 'browserRuntimeId'
@@ -4243,6 +4244,39 @@ switch ($Action) {
                 (Prop $binding 'sendOwnerTaskId') -ne (Text $TaskId)
             ) {
                 throw '发送回执的 TaskId 与 ActiveTaskId/sendOwnerTaskId 不一致。'
+            }
+            $alreadyRecorded = (
+                -not (BoolProp $binding 'pendingReceipt') -and
+                (Prop $binding 'lastMessageFingerprint') -eq (Text $MessageFingerprint) -and
+                (Prop $binding 'lastReceiptStatus') -eq (Text $ReceiptStatus) -and
+                (Prop $binding 'sendIdempotencyKey') -eq $expectedIdempotencyKey -and
+                (Prop $binding 'sendPhase') -eq 'receipt-confirmed' -and
+                $ReceiptStatus -eq 'confirmed'
+            )
+            if ($alreadyRecorded) {
+                # 轮询或恢复可能重复提交同一 confirmed 回执；这是幂等重放，不是缺少 PrepareSend。
+                # 仅清除由旧版本重复登记造成的同一审计标记，其他风险继续保持 fail-closed。
+                $riskReason = Prop $binding 'auditRiskReason'
+                if (BoolProp $binding 'auditRisk' -and $riskReason -notin @('', '没有对应的 PrepareSend 回执')) {
+                    throw '同一 confirmed 回执已存在，但绑定仍有其他审计风险，禁止覆盖。'
+                }
+                SetProp $binding 'auditRisk' $false
+                SetProp $binding 'auditRiskReason' ''
+                SetProp $binding 'resendBlocked' $false
+                SetProp $binding 'lastReceiptEvidenceAt' (Get-Date).ToString('o')
+                SetProp $binding 'receiptRecordedAt' (Get-Date).ToString('o')
+                SetProp $binding 'receiptAt' (Prop $binding 'receiptRecordedAt')
+                Rev $binding
+                Save-Bindings $bindings
+                Result @{
+                    status              = 'already-recorded'
+                    receiptStatus       = 'confirmed'
+                    idempotentReplay    = $true
+                    sendIdempotencyKey  = $expectedIdempotencyKey
+                    nextAction          = 'continue-review'
+                    binding             = $binding
+                } | ConvertTo-Json -Depth 20
+                return
             }
             if (
                 -not (BoolProp $binding 'pendingReceipt') -or

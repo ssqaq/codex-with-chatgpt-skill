@@ -408,6 +408,43 @@ describe("recovery budget belongs to the review task", () => {
   }, 30000);
 });
 
+describe("receipt replay is idempotent", () => {
+  it("does not freeze a binding when the same confirmed receipt is observed twice", () => {
+    const smoke = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", path.join(repo, "core/tests/fixtures/review-native-smoke.ps1"),
+      "-SkillRoot", bundle, "-StateDir", dir], { encoding: "utf8", timeout: 20000, windowsHide: true });
+    expect(smoke.status, smoke.stderr).toBe(0);
+    const message = fs.readFileSync(path.join(dir, "message.txt"), "utf8");
+    const fingerprint = hash(message);
+    const base = ["-TaskId", "native-smoke", "-CodexThreadId", "native-test-thread", "-StateDir", dir,
+      "-BrowserSurface", "codex-in-app-sidebar", "-BrowserTabId", "synthetic-tab", "-BrowserRuntimeId", "synthetic-runtime",
+      "-RuntimeEpoch", "1", "-TabMatchCount", "1", "-DeepSeekSessionId", "official-chat:synthetic-session-123",
+      "-DeepSeekSessionTitle", "Synthetic test", "-BrowserTool", "mcp__cua_repl.js"];
+    const lease = ps("session_binding.ps1", ["-Action", "AcquireBrowserLease", ...base,
+      "-EvidenceSource", "dom", "-DomTargetUrl", "https://chat.deepseek.com/", "-DomSessionTitle", "Synthetic test",
+      "-DomModel", "网页当前模型（合并升级版）", "-DomReasoning", "深度思考", "-DomSearch", "智能搜索"]);
+    expect(lease.status, lease.stderr).toBe(0);
+    const leaseJson = JSON.parse(lease.stdout);
+    const token = leaseJson.lease?.token ?? leaseJson.leaseToken;
+    const epoch = String(leaseJson.lease?.leaseEpoch ?? leaseJson.leaseEpoch);
+    expect(token).toBeTruthy();
+    const duplicate = ps("session_binding.ps1", ["-Action", "RecordSendOutcome", ...base,
+      "-LeaseToken", token, "-LeaseEpoch", epoch, "-EvidenceSource", "dom",
+      "-DomTargetUrl", "https://chat.deepseek.com/a/chat/s/synthetic-session-123", "-DomSessionTitle", "Synthetic test",
+      "-DomModel", "网页当前模型（合并升级版）", "-DomReasoning", "深度思考", "-DomSearch", "智能搜索",
+      "-DomMessagePresence", "present", "-DomInputPresence", "present", "-DomInputEnabled", "enabled",
+      "-DomMessageMarker", "CODEX-BINDING-native-test-thread", "-ExpectedMessageMarker", "CODEX-BINDING-native-test-thread",
+      "-MessageFingerprint", fingerprint, "-ReceiptStatus", "confirmed", "-OpenTabsEvidence", "confirmed",
+      "-TabsListEvidence", "unknown", "-SubmissionMechanism", "enter", "-SubmissionStatus", "succeeded"]);
+    expect(duplicate.status, duplicate.stderr).toBe(0);
+    expect(JSON.parse(duplicate.stdout).status).toBe("already-recorded");
+    const binding = JSON.parse(fs.readFileSync(path.join(dir, "thread-bindings.json"), "utf8")).bindings[0];
+    expect(binding.pendingReceipt).toBe(false);
+    expect(binding.lastReceiptStatus).toBe("confirmed");
+    expect(binding.auditRisk).toBe(false);
+    expect(binding.resendBlocked).toBe(false);
+  }, 30000);
+});
+
 describe("replacement after the original conversation is proven missing", () => {
   it("accepts current public evidence but refuses unknown sends, wrong URLs, tool failures and stopped tasks", () => {
     const smoke = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", path.join(repo, "core/tests/fixtures/review-native-smoke.ps1"),
