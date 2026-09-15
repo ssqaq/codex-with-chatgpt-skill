@@ -423,6 +423,53 @@ function Get-PendingTransaction {
     return Read-Json $TransactionPath $null
 }
 
+function ConvertFrom-JsonToken([object]$Token) {
+    if ($null -eq $Token) { return $null }
+    if ($Token -is [Newtonsoft.Json.Linq.JObject]) {
+        $properties = [ordered]@{}
+        foreach ($property in $Token.Properties()) {
+            if ($properties.Contains($property.Name)) {
+                throw 'JSON object contains conflicting property names.'
+            }
+            $properties.Add($property.Name, (ConvertFrom-JsonToken $property.Value))
+        }
+        return [pscustomobject]$properties
+    }
+    if ($Token -is [Newtonsoft.Json.Linq.JArray]) {
+        $items = [object[]]::new($Token.Count)
+        for ($index = 0; $index -lt $Token.Count; $index++) {
+            $items[$index] = ConvertFrom-JsonToken $Token[$index]
+        }
+        # Do not flatten empty, singleton or nested arrays through the pipeline.
+        return ,$items
+    }
+    if ($Token -is [Newtonsoft.Json.Linq.JValue]) { return $Token.Value }
+    throw 'Unsupported JSON token.'
+}
+
+function ConvertFrom-JsonPreservingDates([string]$Raw) {
+    $command = Get-Command ConvertFrom-Json
+    if ($command.Parameters.ContainsKey('DateKind')) {
+        return ,(ConvertFrom-Json -InputObject $Raw -DateKind String -NoEnumerate)
+    }
+    if ($PSVersionTable.PSEdition -ne 'Core') {
+        # Windows PowerShell 5.1 leaves date strings unchanged, but attaches
+        # ETS Count metadata to root arrays; unwrap it before later JSON writes.
+        $parsed = ConvertFrom-Json -InputObject $Raw
+        if ($parsed -is [array]) { return ,([object[]]$parsed) }
+        return ,$parsed
+    }
+    # PowerShell 7.0-7.4 bundles Newtonsoft but has no DateKind parameter.
+    # Read only JTokens, never instantiate types named by untrusted JSON metadata.
+    $settings = [Newtonsoft.Json.JsonSerializerSettings]::new()
+    $settings.DateParseHandling = [Newtonsoft.Json.DateParseHandling]::None
+    $settings.TypeNameHandling = [Newtonsoft.Json.TypeNameHandling]::None
+    $settings.MetadataPropertyHandling = [Newtonsoft.Json.MetadataPropertyHandling]::Ignore
+    $settings.CheckAdditionalContent = $true
+    $token = [Newtonsoft.Json.JsonConvert]::DeserializeObject($Raw, [Newtonsoft.Json.Linq.JToken], $settings)
+    return ,(ConvertFrom-JsonToken $token)
+}
+
 function Read-Json([string]$Path, [object]$Default) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return $Default
@@ -431,7 +478,7 @@ function Read-Json([string]$Path, [object]$Default) {
     if ([string]::IsNullOrWhiteSpace($raw)) {
         return $Default
     }
-    return $raw | ConvertFrom-Json
+    return ,(ConvertFrom-JsonPreservingDates $raw)
 }
 
 function With-BindingMutex([scriptblock]$Body) {
@@ -4392,9 +4439,9 @@ switch ($Action) {
                 SetProp $binding 'auditRisk' $false
                 SetProp $binding 'auditRiskReason' ''
                 SetProp $binding 'resendBlocked' $false
+                # Re-observation updates evidence freshness, not the first receipt time.
+                # Missing legacy first-receipt timestamps must remain unknown.
                 SetProp $binding 'lastReceiptEvidenceAt' (Get-Date).ToString('o')
-                SetProp $binding 'receiptRecordedAt' (Get-Date).ToString('o')
-                SetProp $binding 'receiptAt' (Prop $binding 'receiptRecordedAt')
                 Rev $binding
                 Save-Bindings $bindings
                 Result @{

@@ -409,10 +409,23 @@ describe("recovery budget belongs to the review task", () => {
 });
 
 describe("receipt replay is idempotent", () => {
-  it("does not freeze a binding when the same confirmed receipt is observed twice", () => {
+  it.each([false, true])("does not freeze or rewrite first receipt timing on replay (legacy timing absent: %s)", missingReceiptTiming => {
     const smoke = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", path.join(repo, "core/tests/fixtures/review-native-smoke.ps1"),
       "-SkillRoot", bundle, "-StateDir", dir], { encoding: "utf8", timeout: 20000, windowsHide: true });
     expect(smoke.status, smoke.stderr).toBe(0);
+    const bindingFile = path.join(dir, "thread-bindings.json");
+    const beforeRegistry = JSON.parse(fs.readFileSync(bindingFile, "utf8"));
+    const firstReceipt = beforeRegistry.bindings[0];
+    // Seven fractional digits ending in 0 must survive JSON replay byte-for-byte.
+    // Random Get-Date values only reproduced the ConvertFrom-Json coercion intermittently.
+    firstReceipt.browserActionAt = "2026-09-15T22:23:50.0173840+08:00";
+    firstReceipt.receiptAt = "2026-09-15T22:23:50.1276540+08:00";
+    firstReceipt.receiptRecordedAt = firstReceipt.receiptAt;
+    if (missingReceiptTiming) {
+      delete firstReceipt.receiptAt;
+      delete firstReceipt.receiptRecordedAt;
+    }
+    fs.writeFileSync(bindingFile, JSON.stringify(beforeRegistry));
     const message = fs.readFileSync(path.join(dir, "message.txt"), "utf8");
     const fingerprint = hash(message);
     const base = ["-TaskId", "native-smoke", "-CodexThreadId", "native-test-thread", "-StateDir", dir,
@@ -442,6 +455,13 @@ describe("receipt replay is idempotent", () => {
     expect(binding.lastReceiptStatus).toBe("confirmed");
     expect(binding.auditRisk).toBe(false);
     expect(binding.resendBlocked).toBe(false);
+    expect(binding.receiptAt ?? "").toBe(firstReceipt.receiptAt ?? "");
+    expect(binding.receiptRecordedAt ?? "").toBe(firstReceipt.receiptRecordedAt ?? "");
+    expect(binding.browserActionAt).toBe(firstReceipt.browserActionAt);
+    expect(Date.parse(binding.lastReceiptEvidenceAt)).toBeGreaterThan(Date.parse(firstReceipt.lastReceiptEvidenceAt));
+    const taskState = JSON.parse(fs.readFileSync(path.join(dir, "native-smoke.json"), "utf8"));
+    if (missingReceiptTiming) expect(taskState.receiptAt ?? "").toBe("");
+    else expect(taskState.receiptAt).toBe(firstReceipt.receiptAt);
   }, 30000);
 });
 

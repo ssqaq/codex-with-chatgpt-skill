@@ -16,6 +16,10 @@ function Text([object]$Value) {
     if ($null -eq $Value) {
         return ''
     }
+    # Preserve offsets/kinds and fractional seconds before Prop converts values to text.
+    if ($Value -is [datetime] -or $Value -is [DateTimeOffset]) {
+        return $Value.ToUniversalTime().ToString('o')
+    }
     return ([string]$Value).Trim()
 }
 
@@ -63,6 +67,53 @@ function Safe-Text([object]$Value, [int]$Limit = 240) {
     return $text
 }
 
+function ConvertFrom-JsonToken([object]$Token) {
+    if ($null -eq $Token) { return $null }
+    if ($Token -is [Newtonsoft.Json.Linq.JObject]) {
+        $properties = [ordered]@{}
+        foreach ($property in $Token.Properties()) {
+            if ($properties.Contains($property.Name)) {
+                throw 'JSON object contains conflicting property names.'
+            }
+            $properties.Add($property.Name, (ConvertFrom-JsonToken $property.Value))
+        }
+        return [pscustomobject]$properties
+    }
+    if ($Token -is [Newtonsoft.Json.Linq.JArray]) {
+        $items = [object[]]::new($Token.Count)
+        for ($index = 0; $index -lt $Token.Count; $index++) {
+            $items[$index] = ConvertFrom-JsonToken $Token[$index]
+        }
+        # Do not flatten empty, singleton or nested arrays through the pipeline.
+        return ,$items
+    }
+    if ($Token -is [Newtonsoft.Json.Linq.JValue]) { return $Token.Value }
+    throw 'Unsupported JSON token.'
+}
+
+function ConvertFrom-JsonPreservingDates([string]$Raw) {
+    $command = Get-Command ConvertFrom-Json
+    if ($command.Parameters.ContainsKey('DateKind')) {
+        return ,(ConvertFrom-Json -InputObject $Raw -DateKind String -NoEnumerate)
+    }
+    if ($PSVersionTable.PSEdition -ne 'Core') {
+        # Windows PowerShell 5.1 leaves date strings unchanged, but attaches
+        # ETS Count metadata to root arrays; unwrap it before later JSON writes.
+        $parsed = ConvertFrom-Json -InputObject $Raw
+        if ($parsed -is [array]) { return ,([object[]]$parsed) }
+        return ,$parsed
+    }
+    # PowerShell 7.0-7.4 bundles Newtonsoft but has no DateKind parameter.
+    # Read only JTokens, never instantiate types named by untrusted JSON metadata.
+    $settings = [Newtonsoft.Json.JsonSerializerSettings]::new()
+    $settings.DateParseHandling = [Newtonsoft.Json.DateParseHandling]::None
+    $settings.TypeNameHandling = [Newtonsoft.Json.TypeNameHandling]::None
+    $settings.MetadataPropertyHandling = [Newtonsoft.Json.MetadataPropertyHandling]::Ignore
+    $settings.CheckAdditionalContent = $true
+    $token = [Newtonsoft.Json.JsonConvert]::DeserializeObject($Raw, [Newtonsoft.Json.Linq.JToken], $settings)
+    return ,(ConvertFrom-JsonToken $token)
+}
+
 function Read-JsonSafe([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return [pscustomobject]@{
@@ -82,7 +133,7 @@ function Read-JsonSafe([string]$Path) {
         }
         return [pscustomobject]@{
             exists = $true
-            value = ($raw | ConvertFrom-Json)
+            value = (ConvertFrom-JsonPreservingDates $raw)
             errorType = ''
         }
     }
@@ -101,7 +152,12 @@ function Parse-Instant([object]$Value) {
         return $null
     }
     $parsed = [datetimeoffset]::MinValue
-    if ([datetimeoffset]::TryParse($text, [ref]$parsed)) {
+    if ([datetimeoffset]::TryParse(
+            $text,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None,
+            [ref]$parsed
+        )) {
         return $parsed
     }
     return $null

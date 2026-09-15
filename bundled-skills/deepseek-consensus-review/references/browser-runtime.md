@@ -75,3 +75,14 @@
 2. 原标签已经关闭但工具和原对话可用时，调用 RecoverRuntimeTab 并传入 ClosedTabEvidenceFile。此分支不消耗工具故障的恢复次数；要求原回执 confirmed、无 pendingReceipt/auditRisk、原身份匹配、无租约且 epoch 递增。
 3. 证据优先使用 60 秒内成功 cua.getState 返回的当前内置浏览器标签清单，加原对话实际 DOM 核验。JSON 字段为 source=cua.getState、taskId、threadId、browserSurface=codex-in-app-sidebar、capturedAt、oldTabId、tabs=[{id,url}]。如果 cua.getState 明确失败、但 cua.getTab 能打开原对话，允许改用 source=cua.getTab，并同时写 oldTabStatus=not-found、inventoryStatus=getState-unavailable；tabs 仍只能包含当前内置浏览器必要字段。旧标签必须已不在清单，新标签必须是原地址的唯一匹配。不得用空白清单、加载慢、外部浏览器或未证明原标签丢失的探测代替。
 4. 重开后的标签又被关闭时，可用新的真实清单恢复；旧清单因 oldTabId 不匹配而拒绝。保留原回执、任务、轮次和计时，不新建官方对话、不重发、不直接取得执行权限。
+
+## 1.19.9 候选：按原始记录验收，不凭回复里的“通过”判断速度
+
+1. `read-current-reply.js` 支持显式传入 `readObservation({tab, message, taskId, round})`。回调只能使用当前宿主公开且已阅读的浏览器 API，返回已定位到本轮的助手正文 `text`、页面确认的布尔完成标志 `complete`，以及可选的实际观察时间 `observedAt`。禁止把整页历史、用户消息、思考区当成助手回复；没有真实完成标志就不能填 `true`。公共逻辑仍逐次检查唯一的 `TASK_ID/ROUND`。
+2. 当前宿主未提供旧 `tab.playwright` 接口时，不再直接调用它；没有已验证的回调就明确暂停为 `unsupported-browser-reader`。本机接口测试不代表真实页面适配成功，须在恢复授权后另做网页复测。宿主要求内部等待、禁止显式 sleep 时，传入 `singleRead: true`，不使用旧的五秒 sleep 循环。
+3. 跨调用读取时，`previousObservedAt` 必须取上一次实际保存的观察时间；发送后的首查可以传本次真实提交时间以检查首次延迟。调用间保存状态、分析和调度所用时间一并计入，不能每次调用都重置计时。不提供时，返回的 `timing.intervalScope=dispatch-only` 仅覆盖本次调用，不能证明整轮及时。
+4. 真实间隔超过 30000 毫秒，返回 `observation-gap-exceeded`，同时保留已经读到的回复和时间。先落盘这些真实观察，再记为速度验收失败；不能因为正文含 `CONSENSUS` 就继续把速度标为通过。缺失、重复、倒序或未来时间不能当作成功检查。
+5. 网页观察必须及时送入当前任务的 `review observe / review reply`。单独填写 PowerShell `RecordRound` 的意见不替代核心状态同步，也不替代原始记录验收；核对当前 Task、轮次、绑定及核心状态一致后才允许推进。
+6. 发布前运行仓库的 `scripts/audit-review-observations.mjs`，从 `submittedAt` 和逐条 `observedAt` 重新核算首次检查延迟、相邻间隔和观察到完成的耗时。已有汇总字段、人工“符合”和评审方 `CONSENSUS` 均不是速度证据。每轮报告必须通过；未知或超标就保留失败记录，修复后重新完成三至四轮，不覆盖旧记录或补造中间读取。
+7. “提交后第 55 秒观察到回复完成”不是“网页生成恰好花了 55 秒”。报告只写观察到的时间；真实生成结束时刻未记录就明确说未记录。
+8. `Codex auth token is unavailable` 是浏览器控制授权不可用。保留原对话和已确认回执，明确显示“第 N 轮待发送／授权暂停”；恢复一次仍失败就停止重试，不重发、不改成其他浏览器、不关闭认证校验。若本机登录检查为 401，需要重新登录 Codex，而不是把等待时间算到 DeepSeek 身上。
