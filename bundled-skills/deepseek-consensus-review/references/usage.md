@@ -139,7 +139,7 @@ $skillRoot = Join-Path $HOME '.codex\skills'
 
 页面和状态不一致时，绑定脚本会把旧本机入口、旧模型和旧会话移到审计字段，再把当前 Task 状态同步成官网、专家模式、深度思考和新的 tab/session；不再靠人工硬改 JSON。
 
-同一 thread 的新 Task `Claim` 会把旧 Task 的 `pendingReceipt`、`auditRisk`、fingerprint、回执和重试记录移到 `previousSendAudit`，清空当前发送闸门，避免旧回执让新评审永久停住。旧 `confirmed` 但缺 DOM/openTabs/tabs.list 的状态，普通更新不能覆盖；明确使用 `update_review_status.ps1 -FinalizeLegacyAudit` 后才会转只读历史终态，保留 `legacy*` 缺口和 `auditRisk=true`，撤销发送授权。
+同一 thread 的新 Task `Claim` 会把旧 Task 的 `pendingReceipt`、`auditRisk`、fingerprint、回执和重试记录移到 `previousSendAudit`，清空当前发送闸门，避免旧回执让新评审永久停住。旧 `confirmed` 但缺 DOM/openTabs/tabs.list 的状态，普通更新不能覆盖；明确使用 `update_review_status.ps1 -FinalizeLegacyAudit` 后才会转只读历史终态，保留 `legacy*` 缺口和 `auditRisk=true`，撤销发送授权。 ForceTerminateTask 后 activeTaskId 可能为空；BindExistingOfficialSession 和再次 Claim 必须根据 previousTaskId/sendOwnerTaskId 识别旧任务并复位发送状态，不能把旧回执带到新评审。
 
 ## 只整理不发送
 

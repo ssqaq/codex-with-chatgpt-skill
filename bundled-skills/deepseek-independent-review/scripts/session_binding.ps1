@@ -203,6 +203,51 @@ function BoolProp([object]$Object, [string]$Name) {
     return (Prop $Object $Name) -in @('True', 'true', '1', 'yes')
 }
 
+function Get-ClosedTabRestoreFingerprint(
+    [string]$OldTabId,
+    [string]$SessionId,
+    [string]$Url
+) {
+    $inputText = "$(Text $OldTabId)|$(Text $SessionId)|$(Text $Url)|closed-tab"
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [Text.Encoding]::UTF8.GetBytes($inputText)
+        return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
+function Has-LeftoverSendState([object]$Binding) {
+    return (
+        (BoolProp $Binding 'pendingReceipt') -or
+        (BoolProp $Binding 'auditRisk') -or
+        -not [string]::IsNullOrWhiteSpace((Prop $Binding 'lastMessageFingerprint')) -or
+        -not [string]::IsNullOrWhiteSpace((Prop $Binding 'sendPhase')) -or
+        -not [string]::IsNullOrWhiteSpace((Prop $Binding 'sendOwnerTaskId'))
+    )
+}
+
+function Assert-SendOwnerForReset([object]$Binding, [string]$NewTask) {
+    $newTask = Text $NewTask
+    if (-not (Has-LeftoverSendState $Binding)) {
+        return
+    }
+    $sendOwner = Prop $Binding 'sendOwnerTaskId'
+    $oldTask = Resolve-HandoffOldTask $Binding
+    if ($sendOwner -eq $newTask) {
+        return
+    }
+    if (-not [string]::IsNullOrWhiteSpace($sendOwner) -and $sendOwner -ne $newTask) {
+        return
+    }
+    if (-not [string]::IsNullOrWhiteSpace($oldTask) -and $oldTask -ne $newTask -and -not [string]::IsNullOrWhiteSpace($sendOwner)) {
+        return
+    }
+    throw '发送归属不明，暂停人工核对，禁止自动清闸门。'
+}
+
 function Get-SendIdempotencyKey([string]$Fingerprint) {
     $inputText = "$CodexThreadId|$TaskId|$(Text $Fingerprint)"
     $sha = [Security.Cryptography.SHA256]::Create()
@@ -1429,6 +1474,37 @@ function Reset-TaskScopedSendState(
      SetProp $Binding 'browserToolStatus' 'not-started'
      SetProp $Binding 'browserToolFailureCount' 0
  }
+
+
+function Resolve-HandoffOldTask([object]$Binding) {
+    $oldTask = ActiveTask $Binding
+    if ([string]::IsNullOrWhiteSpace($oldTask)) {
+        $oldTask = Prop $Binding 'previousTaskId'
+    }
+    if ([string]::IsNullOrWhiteSpace($oldTask)) {
+        $oldTask = Prop $Binding 'sendOwnerTaskId'
+    }
+    return $oldTask
+}
+
+function Needs-SendStateReset(
+    [object]$Binding,
+    [string]$NewTask
+) {
+    $newTask = Text $NewTask
+    $sendOwner = Prop $Binding 'sendOwnerTaskId'
+    if ([string]::IsNullOrWhiteSpace($sendOwner)) {
+        return $false
+    }
+    if ($sendOwner -ne $newTask) {
+        return $true
+    }
+    $oldTask = Resolve-HandoffOldTask $Binding
+    if (-not [string]::IsNullOrWhiteSpace($oldTask) -and $oldTask -ne $newTask) {
+        return $true
+    }
+    return $false
+}
 
 function Rev([object]$Binding) {
     $nextRevision = (LongProp $Binding 'bindingRevision') + 1
@@ -3024,13 +3100,14 @@ switch ($Action) {
 
             if ($null -ne $binding) {
                 $oldStatus = Prop $binding 'status'
-                $oldTask = ActiveTask $binding
+                $oldTask = Resolve-HandoffOldTask $binding
                 if (
                     $oldStatus -eq 'recovery-pending'
                 ) {
                     throw '当前绑定仍在 recovery-pending，必须先 RecoverRuntimeTab，不能把恢复中的 tab 当成新会话接管。'
                 }
                 if (
+                    -not [string]::IsNullOrWhiteSpace($oldTask) -and
                     $oldTask -ne (Text $TaskId) -and
                     -not (IsTaskTerminal $oldTask)
                 ) {
@@ -3054,12 +3131,21 @@ switch ($Action) {
                 -not [string]::IsNullOrWhiteSpace($oldTask) -and
                 $oldTask -ne (Text $TaskId)
             )
+            $needsSendReset = (
+                $null -ne $binding -and
+                (Needs-SendStateReset $binding (Text $TaskId))
+            )
 
             if ($null -eq $binding) {
                 $binding = New-Binding 'bound' $sessionId
             }
-            elseif ($isNewTask -or $oldStatus -in @('lost', 'cancelled', 'terminated')) {
-                Reset-TaskScopedSendState $binding $oldTask `
+            elseif ($needsSendReset -or $isNewTask -or $oldStatus -in @('lost', 'cancelled', 'terminated')) {
+                Assert-SendOwnerForReset $binding (Text $TaskId)
+                $resetTask = $oldTask
+                if ([string]::IsNullOrWhiteSpace($resetTask)) {
+                    $resetTask = Prop $binding 'sendOwnerTaskId'
+                }
+                Reset-TaskScopedSendState $binding $resetTask `
                     '当前页面已核验为官方 DeepSeek 会话，允许当前 Task 接管；旧 Task 审计保留在 previousSendAudit。'
             }
 
@@ -3166,9 +3252,15 @@ switch ($Action) {
                     -not [string]::IsNullOrWhiteSpace((Text $oldTask)) -and
                     $oldTask -ne (Text $TaskId)
                 )
+                $needsSendReset = Needs-SendStateReset $binding (Text $TaskId)
                 Set-Active $binding (Text $TaskId) 'recovery-pending' '复用原官网会话，等待一次受控 runtime 恢复'
-                if ($isNewTask) {
-                    Reset-TaskScopedSendState $binding $oldTask '复用原官网会话，等待一次受控 runtime 恢复'
+                if ($isNewTask -or $needsSendReset) {
+                    Assert-SendOwnerForReset $binding (Text $TaskId)
+                    $resetTask = $oldTask
+                    if ([string]::IsNullOrWhiteSpace($resetTask)) {
+                        $resetTask = Prop $binding 'sendOwnerTaskId'
+                    }
+                    Reset-TaskScopedSendState $binding $resetTask '复用原官网会话，等待一次受控 runtime 恢复'
                 }
                 Rev $binding
                 Save-Bindings $bindings
@@ -3207,7 +3299,7 @@ switch ($Action) {
             }
 
             Assert-Binding $binding
-            $oldTask = ActiveTask $binding
+            $oldTask = Resolve-HandoffOldTask $binding
             if ([string]::IsNullOrWhiteSpace((Text $oldTask))) {
                 $oldTask = Prop $binding 'previousTaskId'
             }
@@ -3241,9 +3333,15 @@ switch ($Action) {
                 -not [string]::IsNullOrWhiteSpace((Text $oldTask)) -and
                 $oldTask -ne (Text $TaskId)
             )
+            $needsSendReset = Needs-SendStateReset $binding (Text $TaskId)
             Set-Active $binding (Text $TaskId) 'completed-or-frozen' $claimReason
-            if ($isNewTask) {
-                Reset-TaskScopedSendState $binding $oldTask $claimReason
+            if ($isNewTask -or $needsSendReset) {
+                Assert-SendOwnerForReset $binding (Text $TaskId)
+                $resetTask = $oldTask
+                if ([string]::IsNullOrWhiteSpace($resetTask)) {
+                    $resetTask = Prop $binding 'sendOwnerTaskId'
+                }
+                Reset-TaskScopedSendState $binding $resetTask $claimReason
             }
             Rev $binding
             Save-Bindings $bindings
@@ -4020,13 +4118,20 @@ switch ($Action) {
                 # Reopening a proven closed tab is not retrying a disconnected runtime.
                 # Preserve the runtime recovery budget. Fresh evidence must identify a different tab.
                 $e = Read-Json $ClosedTabEvidenceFile $null
-                $fingerprint = Prop $binding 'lastMessageFingerprint'
+                $receiptFingerprint = Prop $binding 'lastMessageFingerprint'
                 if ((Prop $binding 'status') -ne 'bound' -or (BoolProp $binding 'pendingReceipt') -or
                     (BoolProp $binding 'auditRisk') -or (Prop $binding 'lastReceiptStatus') -ne 'confirmed' -or
-                    [string]::IsNullOrWhiteSpace($fingerprint)) {
+                    [string]::IsNullOrWhiteSpace($receiptFingerprint)) {
                     throw '关闭标签恢复要求原回执明确且无待确认风险。'
                 }
-                if ($null -eq $e -or (Prop $e 'source') -ne 'cua.getState' -or
+                $evidenceSource = Prop $e 'source'
+                $inventoryOk = $evidenceSource -eq 'cua.getState'
+                $tabProbeOk = (
+                    $evidenceSource -eq 'cua.getTab' -and
+                    (Prop $e 'oldTabStatus') -eq 'not-found' -and
+                    (Prop $e 'inventoryStatus') -eq 'getState-unavailable'
+                )
+                if ($null -eq $e -or -not ($inventoryOk -or $tabProbeOk) -or
                     (Prop $e 'taskId') -ne (Text $TaskId) -or (Prop $e 'threadId') -ne (Text $CodexThreadId) -or
                     (Prop $e 'browserSurface') -ne $TargetBrowserSurface -or
                     (Prop $e 'oldTabId') -ne (Prop $binding 'browserTabId') -or
@@ -4041,6 +4146,10 @@ switch ($Action) {
                 if (@($tabs | Where-Object { (Prop $_ 'id') -eq (Prop $binding 'browserTabId') }).Count -ne 0 -or
                     $sameSession.Count -ne 1 -or (Prop $sameSession[0] 'id') -ne (Text $BrowserTabId)) {
                     throw '原标签仍在、目标标签缺失或存在重复对话标签，不能恢复。'
+                }
+                $fingerprint = Get-ClosedTabRestoreFingerprint (Prop $e 'oldTabId') $sessionId (Text $DomTargetUrl)
+                if ((Prop $binding 'lastClosedTabRestoreFingerprint') -eq $fingerprint) {
+                    throw '同一关闭标签指纹最多恢复一次。'
                 }
             }
             elseif ((Prop $binding 'browserRecoveryStatus') -eq 'recovered' -or (LongProp $binding 'browserRecoveryCount') -gt 1 -or ((Prop $binding 'status') -eq 'bound' -and (LongProp $binding 'browserRecoveryCount') -ge 1)) {
@@ -4793,6 +4902,9 @@ switch ($Action) {
             $binding = Current-Binding $bindings
             if ($null -eq $binding) {
                 throw '找不到当前 thread 绑定。'
+            }
+            if ((BoolProp $binding 'pendingReceipt') -or (BoolProp $binding 'auditRisk')) {
+                throw '存在未确认发送或审计风险，禁止 ForceTerminate；先核验回执。'
             }
             $oldTask = ActiveTask $binding
             if ($oldTask -ne (Text $TaskId)) {

@@ -16,7 +16,7 @@
 5. 用户已授权“原对话确实找不回时新建”的任务：优先恢复原地址；确认原对话不存在、当前工具可用且没有重复官方会话后，允许新建并携带已确认的需求、轮次、方案和分歧摘要。没有这个授权时不擅自替换。工具断开、加载超时、需要登录或发送落点未知仍暂停，不能当成原对话丢失。
 6. 当前工具的丢失证据使用 `LossEvidenceSources=cua.getState,original-url`：成功清单证明没有可复用官方会话，访问原地址后页面明确提示原对话不存在，至少两次实际观察。调用 MarkLost 时填 OriginalConversationStatus=not-found、BrowserToolStatus=available、原 DomTargetUrl、OpenTabsEvidence=absent，旧来源 TabsListEvidence 保留 unknown。脚本本身不访问网页，所有证据必须实际读取。随后按现有 BeginBootstrap -ReplaceLost 建立新绑定，保持一个专用官方会话和标签，不另造状态机。
 7. 未确认发送先核对原消息，present 只补回执，unknown 停止重发并说明卡点；允许新建不等于允许重复发送。新对话只携带已确认的摘要与真实当前轮次，不伪称它拥有原网页历史或已完成新的共识。
-8. 恢复次数按评审 Task 计算。前任务正常结束后新 Task Claim 复用会话会清零并保留旧恢复审计；同一 Task 的重复 Claim 不能清零。旧版已经 Claim 的休眠记录只有前任务终态、尚无当前浏览器/发送动作和待回执风险时才迁移，未知情况保留原记录。
+8. 恢复次数按评审 Task 计算。前任务正常结束后新 Task Claim 复用会话会清零并保留旧恢复审计；同一 Task 的重复 Claim 不能清零。 ForceTerminateTask 后若 activeTaskId 已清空，BindExistingOfficialSession 和 Claim 仍须按 previousTaskId/sendOwnerTaskId 复位发送状态。旧版已经 Claim 的休眠记录只有前任务终态、尚无当前浏览器/发送动作和待回执风险时才迁移，未知情况保留原记录。
 
 ## 连续完成一轮
 
@@ -73,5 +73,5 @@
 
 1. 任务恢复成功后又发生新的真实故障，可以再次恢复，累计次数另行记录。同一次故障失败后不循环重连；取消、终态、未知发送和十分钟无内容进展保护保留。新任务不继承旧故障次数。
 2. 原标签已经关闭但工具和原对话可用时，调用 RecoverRuntimeTab 并传入 ClosedTabEvidenceFile。此分支不消耗工具故障的恢复次数；要求原回执 confirmed、无 pendingReceipt/auditRisk、原身份匹配、无租约且 epoch 递增。
-3. 证据是60秒内成功 cua.getState 返回的当前内置浏览器标签清单，加原对话实际 DOM 核验。JSON 字段为 source=cua.getState、taskId、threadId、browserSurface=codex-in-app-sidebar、capturedAt、oldTabId、tabs=[{id,url}]。只保存当前内置浏览器必要字段。旧标签必须已不在清单，新标签必须是原地址的唯一匹配。不得用空白清单、加载慢或外部浏览器代替。
+3. 证据优先使用 60 秒内成功 cua.getState 返回的当前内置浏览器标签清单，加原对话实际 DOM 核验。JSON 字段为 source=cua.getState、taskId、threadId、browserSurface=codex-in-app-sidebar、capturedAt、oldTabId、tabs=[{id,url}]。如果 cua.getState 明确失败、但 cua.getTab 能打开原对话，允许改用 source=cua.getTab，并同时写 oldTabStatus=not-found、inventoryStatus=getState-unavailable；oldTabStatus=not-found 必须由 tabs 清单缺失 oldTabId 得出。新标签除 URL 外还核验官方会话号和 marker。关闭标签指纹为 oldTabId|sessionId|url|closed-tab 的 SHA-256，同一指纹最多恢复一次。tabs 仍只能包含当前内置浏览器必要字段。旧标签必须已不在清单，新标签必须是原地址的唯一匹配。找不到原对话时暂停，不自动新建官网会话。不得用空白清单、加载慢、外部浏览器或未证明原标签丢失的探测代替。
 4. 重开后的标签又被关闭时，可用新的真实清单恢复；旧清单因 oldTabId 不匹配而拒绝。保留原回执、任务、轮次和计时，不新建官方对话、不重发、不直接取得执行权限。

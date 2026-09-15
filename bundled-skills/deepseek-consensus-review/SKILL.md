@@ -105,7 +105,7 @@ Skill chip 不是执行证据。没有真实激活状态、绑定、页面和回
 ## 老任务、旧绑定和取消
 
 - 同一 thread 的新目标：新建 TaskId，旧 TaskId 终态后 `Claim`，复用原官网会话。
-- 新 Task `Claim` 前会把旧 Task 的 `pendingReceipt`、`auditRisk`、fingerprint、回执和重试记录移入 `previousSendAudit`，清空当前发送闸门；旧审计保留，但不阻塞新 Task 的新 fingerprint。
+- 新 Task `Claim` 前会把旧 Task 的 `pendingReceipt`、`auditRisk`、fingerprint、回执和重试记录移入 `previousSendAudit`，清空当前发送闸门；旧审计保留，但不阻塞新 Task 的新 fingerprint。 ForceTerminateTask 后 activeTaskId 可能为空；BindExistingOfficialSession 和再次 Claim 必须根据 previousTaskId/sendOwnerTaskId 识别旧任务并复位发送状态，不能把旧回执带到新评审。 sendOwnerTaskId 缺失或为空时不自动清闸门，暂停人工核对。仅当 sendOwnerTaskId 非空、属于旧 Task、不等于当前 Task、无有效 lease 时才移入审计并清空。ForceTerminateTask 遇到 pendingReceipt 或 auditRisk 时拒绝。消息 fingerprint 是完整消息字节的 SHA-256，消息含 TASK_ID 和绑定暗号；发送幂等键再加 thread+task。
 - 用户说“继续、补充、再评审”：沿用当前 TaskId 和会话，不新建。
 - 用户说“继续”不等于任务完成，也不能把 heartbeat 暂停当成完成；应恢复当前 Task/同一会话，除非是真实失败、用户取消或决策僵局。
 - 如果旧绑定只是被过期 lease 清理误标为 `lost`，先在当前右侧栏核验原 sessionId、可用时的 marker、当前网页模型、深度思考和智能搜索，再调用 `RecoverExpiredLeaseBinding` 复用原会话；禁止直接新建第二个 DeepSeek 会话。

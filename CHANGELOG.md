@@ -1,5 +1,13 @@
 # 更新记录
 
+## 1.19.8（2026-09-15）
+
+1. **关闭标签恢复更严**：oldTabStatus=not-found 必须由 getTab 的 tabs 清单缺失 oldTabId 得出，并和故障前绑定核对；新标签还要核验官方会话号和绑定暗号。
+2. **同一关闭标签只恢复一次**：关闭标签指纹 = SHA-256(oldTabId|sessionId|url|closed-tab)，同一指纹最多恢复一次；找不到原对话就暂停，不自动新建官网会话。
+3. **发送态复位更安全**：sendOwnerTaskId 为空且还有残留发送态时暂停人工核对，不自动清闸门；ForceTerminate 遇到 pendingReceipt 或 auditRisk 时拒绝。
+4. **新增回归测试**：关闭标签指纹、空 sendOwner 暂停、pending ForceTerminate 拒绝。
+5. **复测结果**：真实 DeepSeek 4 轮评审 C1 REVISE → C2 REVISE → C3 CONSENSUS → C4 专项复核 CONSENSUS；509 项测试通过；类型检查和构建通过。
+
 ## 1.19.7（2026-09-15）
 
 1. **释放/续租浏览器锁不再误报**：只填锁的口令和序号即可安全释放或续租，不再被误报成“身份不一致”；口令或序号不对仍然拒绝，缺口令会明确提示先取租约。

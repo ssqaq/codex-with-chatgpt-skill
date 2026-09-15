@@ -73,5 +73,5 @@
 
 1. 任务恢复成功后又发生新的真实故障，可以再次恢复，累计次数另行记录。同一次故障失败后不循环重连；取消、终态、未知发送和十分钟无内容进展保护保留。新任务不继承旧故障次数。
 2. 原标签已经关闭但工具和原对话可用时，调用 RecoverRuntimeTab 并传入 ClosedTabEvidenceFile。此分支不消耗工具故障的恢复次数；要求原回执 confirmed、无 pendingReceipt/auditRisk、原身份匹配、无租约且 epoch 递增。
-3. 证据是60秒内成功 cua.getState 返回的当前内置浏览器标签清单，加原对话实际 DOM 核验。JSON 字段为 source=cua.getState、taskId、threadId、browserSurface=codex-in-app-sidebar、capturedAt、oldTabId、tabs=[{id,url}]。只保存当前内置浏览器必要字段。旧标签必须已不在清单，新标签必须是原地址的唯一匹配。不得用空白清单、加载慢或外部浏览器代替。
+3. 证据优先使用 60 秒内成功 cua.getState 返回的当前内置浏览器标签清单，加原对话实际 DOM 核验。JSON 字段为 source=cua.getState、taskId、threadId、browserSurface=codex-in-app-sidebar、capturedAt、oldTabId、tabs=[{id,url}]。如果 cua.getState 明确失败、但 cua.getTab 能打开原对话，允许改用 source=cua.getTab，并同时写 oldTabStatus=not-found、inventoryStatus=getState-unavailable；tabs 仍只能包含当前内置浏览器必要字段。旧标签必须已不在清单，新标签必须是原地址的唯一匹配。不得用空白清单、加载慢、外部浏览器或未证明原标签丢失的探测代替。
 4. 重开后的标签又被关闭时，可用新的真实清单恢复；旧清单因 oldTabId 不匹配而拒绝。保留原回执、任务、轮次和计时，不新建官方对话、不重发、不直接取得执行权限。

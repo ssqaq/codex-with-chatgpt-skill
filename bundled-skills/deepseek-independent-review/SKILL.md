@@ -124,7 +124,7 @@ BeginBootstrap → AcquireBrowserLease → DOM → VerifyBootstrap → PrepareSe
 
 单纯过期的浏览器 lease，如果没有 `pendingReceipt` 或其他未确认发送风险，按 `expired-lease-safe-release` 自动清理并恢复；只有存在待回执、unknown/wrong-session/not-found 等风险时才标记审计风险并冻结。
 
-新 Task `Claim` 复用同一官网会话前，会把旧 Task 的 `pendingReceipt`、`auditRisk`、fingerprint、回执和重试记录移入 `previousSendAudit`，清空当前发送闸门；旧审计保留，但不阻塞新 Task 的新 fingerprint。用户说“继续”不等于任务完成，也不能把 heartbeat 暂停当成完成，应恢复当前 Task/同一会话。
+新 Task `Claim` 复用同一官网会话前，会把旧 Task 的 `pendingReceipt`、`auditRisk`、fingerprint、回执和重试记录移入 `previousSendAudit`，清空当前发送闸门；旧审计保留，但不阻塞新 Task 的新 fingerprint。用户说“继续”不等于任务完成，也不能把 heartbeat 暂停当成完成，应恢复当前 Task/同一会话。 ForceTerminateTask 后 activeTaskId 可能为空；BindExistingOfficialSession 和再次 Claim 必须根据 previousTaskId/sendOwnerTaskId 识别旧任务并复位发送状态，不能把旧回执带到新评审。 sendOwnerTaskId 缺失或为空时不自动清闸门，暂停人工核对。仅当 sendOwnerTaskId 非空、属于旧 Task、不等于当前 Task、无有效 lease 时才移入审计并清空。ForceTerminateTask 遇到 pendingReceipt 或 auditRisk 时拒绝。消息 fingerprint 是完整消息字节的 SHA-256，消息含 TASK_ID 和绑定暗号；发送幂等键再加 thread+task。
 
 ## 一次独立评审流程
 
