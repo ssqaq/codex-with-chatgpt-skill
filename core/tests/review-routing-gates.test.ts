@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { Command } from "commander";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerReviewCommands } from "../src/cli/review.js";
@@ -88,6 +90,62 @@ describe("review CLI routing preserves user intent", () => {
       .toMatchObject({ ok: true, reviewProvider: "chatgpt", resumeTaskId: previous.taskId });
     expect(await cli("start", "--request", "继续", "--provider", "chatgpt"))
       .toMatchObject({ ok: true, session: { taskId: previous.taskId, reviewProvider: "chatgpt", phase: "WAITING" } });
+  });
+});
+
+describe("c2c review bind aligns only with a verified task", () => {
+  let deepseekDir: string;
+  let originalDeepseekDir: string | undefined;
+  const skillName = "deepseek-consensus-review";
+  beforeEach(() => {
+    deepseekDir = path.join(directory, "deepseek-state");
+    fs.mkdirSync(deepseekDir, { recursive: true });
+    originalDeepseekDir = process.env.C2C_DEEPSEEK_STATE_DIR;
+    process.env.C2C_DEEPSEEK_STATE_DIR = deepseekDir;
+  });
+  afterEach(() => {
+    if (originalDeepseekDir === undefined) delete process.env.C2C_DEEPSEEK_STATE_DIR;
+    else process.env.C2C_DEEPSEEK_STATE_DIR = originalDeepseekDir;
+  });
+  const conversationUrl = "https://chat.deepseek.com/a/chat/s/abcdefgh12345678";
+  function writeNative(active = "live-task") {
+    const shared = { codexThreadId: threadId, skillName, deepseekSessionId: "official-chat:abcdefgh12345678",
+      conversationUrl, browserTabId: "tab-1", browserRuntimeId: "runtime-1", runtimeEpoch: 1,
+      model: "网页当前模型（合并升级版）", reasoning: "深度思考", searchMode: "智能搜索",
+      targetUrl: "https://chat.deepseek.com/", browserSurface: "codex-in-app-sidebar", sendOwnerTaskId: active };
+    const source: Record<string, unknown> = { ...shared, taskId: active, taskName: "检查按钮状态", sessionOwner: threadId,
+      reviewBatch: "C3", stateRevision: 13, activationStatus: "activated", taskTerminalStatus: "active" };
+    const binding: Record<string, unknown> = { ...shared, owner: threadId, activeTaskId: active, taskId: active, status: "bound",
+      bindingRevision: 7, pendingReceipt: false, auditRisk: false, resendBlocked: false, auditOnly: false };
+    fs.writeFileSync(path.join(deepseekDir, `${active}.json`), JSON.stringify(source));
+    fs.writeFileSync(path.join(deepseekDir, "thread-bindings.json"), JSON.stringify({ bindings: [binding] }));
+  }
+  it("points the panel at the verified task without sending and keeps execution closed", async () => {
+    saved("BLOCKED");
+    writeNative();
+    const result = await cli("bind", "--task", "live-task");
+    expect(result).toMatchObject({ ok: true, aligned: true, previousTaskId: "routing-gate-task", canExecute: false });
+    expect(result.session).toMatchObject({ taskId: "live-task", round: 3, phase: "PREPARING", receiptStatus: "none",
+      reviewerConsensus: false, codexConsensus: false, chatUrl: conversationUrl });
+    expect(runDeepseek).not.toHaveBeenCalled();
+    expect(readReview(workspaceId, threadId)).toMatchObject({ taskId: "live-task" });
+  });
+  it("refuses an operator-supplied task id that the binding does not confirm", async () => {
+    saved("BLOCKED");
+    writeNative();
+    const result = await cli("bind", "--task", "some-other-task");
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("不一致") });
+    expect(readReview(workspaceId, threadId)).toMatchObject({ taskId: "routing-gate-task" });
+    expect(runDeepseek).not.toHaveBeenCalled();
+  });
+  it("reports no-op alignment and refuses when nothing is verified", async () => {
+    saved("BLOCKED");
+    writeNative("routing-gate-task");
+    const same = await cli("bind");
+    expect(same).toMatchObject({ ok: true, aligned: false, canExecute: false });
+    fs.writeFileSync(path.join(deepseekDir, "thread-bindings.json"), JSON.stringify({ bindings: [] }));
+    const blocked = await cli("bind");
+    expect(blocked).toMatchObject({ ok: false, error: expect.stringContaining("DeepSeek 绑定") });
   });
 });
 

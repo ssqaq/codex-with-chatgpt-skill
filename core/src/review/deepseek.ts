@@ -160,6 +160,33 @@ function canReconcileConfirmedBinding(s: ReviewSession, source: Raw, binding: Ra
   }
   return true;
 }
+/** The verified active task recorded on this thread's own binding. */
+function boundActiveTask(binding: Raw | undefined): string {
+  return text(binding?.activeTaskId) || text(binding?.taskId);
+}
+const UNSAFE_FLAGS = ["pendingReceipt", "auditRisk", "resendBlocked", "auditOnly"];
+/**
+ * Detect a stale panel task: the panel reads an old TaskId while this thread's
+ * verified binding already moved to a different, safe, active task. Returning
+ * the real TaskId lets the operator align instead of guessing why it is stuck.
+ */
+function panelDrift(s: ReviewSession, binding: Raw | undefined, bindings: Raw[]): { taskId: string; reason: string } | null {
+  if (!binding || text(binding.status) !== "bound" || text(binding.owner) !== s.threadId) return null;
+  const active = boundActiveTask(binding);
+  if (!active || active === s.taskId) return null;
+  // The other task must be this thread's own, same mode, and safe to adopt.
+  if (text(binding.sendOwnerTaskId) !== active) return null;
+  if (UNSAFE_FLAGS.some(key => risk(binding[key]))) return null;
+  let other: Raw | null;
+  try { other = readObject(path.join(deepseekStateDir(), `${active}.json`)); } catch { return null; }
+  if (!other || text(other.taskId) !== active || text(other.codexThreadId) !== s.threadId) return null;
+  if (text(other.skillName) !== deepseekSkillName(s.reviewMode)) return null;
+  if (text(other.activationStatus) !== "activated" || text(other.taskTerminalStatus) !== "active") return null;
+  if (risk(other.reviewCancelled)) return null;
+  if (UNSAFE_FLAGS.some(key => risk(other[key]))) return null;
+  if (text(other.sendOwnerTaskId) !== active) return null;
+  return { taskId: active, reason: `本地评审面板还指向旧任务 ${s.taskId}，但本任务已验证的活跃评审是 ${active}；没有发送、没有改文件。` };
+}
 function conversation(raw: Raw, threadId: string): string | null {
   const url = text(raw.conversationUrl), session = text(raw.deepseekSessionId);
   try {
@@ -186,6 +213,10 @@ export function syncDeepseek(s: ReviewSession, source: Raw | null, bindings: Raw
   const candidates = bindings.filter(b => b.codexThreadId === s.threadId);
   if (candidates.length > 1) return block("同一任务存在多个绑定，禁止猜测会话");
   const b = candidates[0];
+  // A stale panel must name the verified task instead of only pausing.
+  // Alignment still requires an explicit operator command.
+  const drift = panelDrift(s, b, bindings);
+  if (drift) return block(drift.reason, `c2c review bind --task ${drift.taskId}`);
   const batch = text(source.reviewBatch).match(s.reviewMode === "consensus" ? /^C([1-9]\d*)$/ : /^R([1-9]\d*)$/);
   if (!batch || !Number.isSafeInteger(Number(batch[1]))) return block("DeepSeek 轮次无效");
   const round = Number(batch[1]);
@@ -266,6 +297,53 @@ export function syncDeepseek(s: ReviewSession, source: Raw | null, bindings: Raw
   if (codexConsensus) projected = markTiming(projected, "consensusAt", new Date().toISOString());
   if (s.timings?.find(t => t.round === round)?.recoveryStartedAt && b.status === "bound") projected = markTiming(projected, "recoveryFinishedAt", text(b.lastVerifiedAt) || new Date().toISOString());
   return trackWait(s, projected, new Date(), sameInstant(source.browserActionAt, b.browserActionAt) ? text(source.browserActionAt) : undefined);
+}
+
+/**
+ * Resolve the verified review task this thread should be tracking, and prove
+ * it is safe to align to. Every field comes from the skill's own files; the
+ * CLI never accepts operator-supplied task identity, so the panel cannot be
+ * pointed at an unverified or unsafe task.
+ */
+export type ReviewAlignment = { taskId: string; round: number; reviewMode: ReviewMode;
+  summary: string; evidenceRevision?: number; chatUrl?: string; modelName?: string; reasoningStrength?: string };
+export function verifiedAlignment(s: ReviewSession, requested?: string): ReviewAlignment {
+  const registry = readObject(path.join(deepseekStateDir(), "thread-bindings.json"));
+  const bindings = registry?.bindings ?? [];
+  if (!Array.isArray(bindings) || bindings.some(b => !object(b))) throw new Error("DeepSeek 绑定记录损坏，原文件保留。");
+  const owned = bindings.filter(b => b.codexThreadId === s.threadId);
+  if (owned.length !== 1) throw new Error(owned.length ? "同一任务存在多个绑定，禁止猜测会话。" : "当前任务没有可用的 DeepSeek 绑定，不能对齐。");
+  const b = owned[0];
+  if (text(b.status) !== "bound" || text(b.owner) !== s.threadId) throw new Error("DeepSeek 绑定尚未恢复，不能对齐。");
+  const taskId = boundActiveTask(b) || s.taskId;
+  if (requested && text(requested) !== taskId) throw new Error(`绑定记录里的活跃评审是 ${taskId}，与请求的 ${text(requested)} 不一致；不能按指定任务号对齐。`);
+  if (text(b.sendOwnerTaskId) !== taskId) throw new Error("绑定记录的发送归属不是该任务，不能对齐。");
+  if (UNSAFE_FLAGS.some(key => risk(b[key]))) throw new Error("绑定存在未确认发送或审计风险，先核对落点，不能对齐。");
+  const source = readObject(path.join(deepseekStateDir(), `${taskId}.json`));
+  if (!source) throw new Error("找不到该评审任务的状态文件，不能对齐。");
+  if (text(source.taskId) !== taskId || text(source.codexThreadId) !== s.threadId) throw new Error("该评审任务不属于当前 Codex 任务，不能对齐。");
+  const mode = text(source.skillName) === deepseekSkillName("single") ? "single" : text(source.skillName) === deepseekSkillName("consensus") ? "consensus" : null;
+  if (!mode) throw new Error("该评审任务的评审方式无法识别，不能对齐。");
+  if (text(source.activationStatus) !== "activated" || text(source.taskTerminalStatus) !== "active") throw new Error("该评审任务未激活或已结束，不能对齐。");
+  if (risk(source.reviewCancelled)) throw new Error("该评审任务已取消，不能对齐。");
+  if (UNSAFE_FLAGS.some(key => risk(source[key]))) throw new Error("该评审任务存在未确认发送或审计风险，先核对落点，不能对齐。");
+  if (text(source.sendOwnerTaskId) !== taskId) throw new Error("该评审任务的发送归属不一致，不能对齐。");
+  const round = integer(text(source.reviewBatch).replace(/^[CR]/, ""));
+  if (round === null || round < 1) throw new Error("该评审任务的轮次无效，不能对齐。");
+  const url = conversation(source, s.threadId);
+  if (!url || conversation(b, s.threadId) !== url) throw new Error("该评审任务的会话地址未经核验，不能对齐。");
+  if (["deepseekSessionId", "browserTabId", "browserRuntimeId"].some(k => !text(b[k]) || text(source[k]) !== text(b[k]))) {
+    throw new Error("该评审任务的会话或浏览器身份不一致，不能对齐。");
+  }
+  if (integer(b.runtimeEpoch) === null || integer(b.runtimeEpoch)! < 1 || integer(source.runtimeEpoch) !== integer(b.runtimeEpoch)) {
+    throw new Error("该评审任务的浏览器 runtime 身份不一致，不能对齐。");
+  }
+  const summary = text(source.taskName) || text(source.summary) || `DeepSeek 评审任务 ${taskId}`;
+  return { taskId, round, reviewMode: mode, summary: snippet(summary),
+    evidenceRevision: integer(source.stateRevision) ?? undefined,
+    ...(url ? { chatUrl: url } : {}),
+    ...(MODEL_NAMES.has(text(b.model)) ? { modelName: text(b.model) } : {}),
+    ...(text(b.reasoning) ? { reasoningStrength: text(b.reasoning) } : {}) };
 }
 
 export function readDeepseek(s: ReviewSession): ReviewSession {

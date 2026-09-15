@@ -8,6 +8,7 @@ import {
   selectReviewer,
 } from "../src/review/provider.js";
 import {
+  alignReview,
   beginReviewExecution,
   canRetryRateLimit,
   canExecuteReview,
@@ -420,6 +421,39 @@ describe("persisted review ownership and recovery", () => {
     expect(transform).not.toHaveBeenCalled();
     expect(fs.readFileSync(lock, "utf8")).toBe("another writer");
     expect(readReview(state.workspaceId, state.threadId)).toEqual(state);
+  });
+
+  it("aligns to a verified task by archiving the stale panel and reopening every gate", () => {
+    // A panel that still holds execution permission and consensus is exactly the
+    // dangerous case: alignment must retract all of it.
+    const stale = readyReview({ taskId: "panel-old", round: 5, replyValidationVersion: 1,
+      acceptedReply: { taskId: "panel-old", threadId: "thread-1", round: 5, source: "codex-in-app-browser",
+        observationId: "fixture-panel", observedAt: "2026-09-12T01:00:00Z",
+        conversationUrl: "https://chat.deepseek.com/a/chat/s/verified-session-123", role: "assistant",
+        complete: true, messageFingerprint: "panel-fingerprint", replyFingerprint: "b".repeat(64), decision: "CONSENSUS" } });
+    changeReview(stale.workspaceId, stale.threadId, () => stale);
+    expect(canExecuteReview(stale)).toBe(true);
+    const aligned = alignReview({ workspaceId: stale.workspaceId, threadId: stale.threadId, taskId: "review-task",
+      reviewProvider: "deepseek", reviewMode: "consensus", summary: "按已验证的评审任务继续。", round: 3, evidenceRevision: 11,
+      chatUrl: "https://chat.deepseek.com/a/chat/s/verified-session-123", modelName: "网页当前模型（合并升级版）", reasoningStrength: "深度思考" });
+    // Consensus, replies, receipts and execution permission are never carried over.
+    expect(aligned).toMatchObject({ taskId: "review-task", round: 3, phase: "PREPARING", receiptStatus: "none",
+      replyReceived: false, reviewerConsensus: false, codexConsensus: false, evidenceRevision: 11, blockedReason: "",
+      chatUrl: "https://chat.deepseek.com/a/chat/s/verified-session-123", nextAction: "sync-verified-review-task" });
+    expect(canExecuteReview(aligned)).toBe(false);
+    expect(readReview(stale.workspaceId, stale.threadId)).toEqual(aligned);
+    // The superseded panel entry is archived rather than destroyed.
+    const historyFile = path.join(path.dirname(reviewFile(stale.workspaceId, stale.threadId)), "history", stale.threadId, "panel-old.json");
+    expect(JSON.parse(fs.readFileSync(historyFile, "utf8"))).toEqual(stale);
+  });
+
+  it("refuses to align without a valid round and keeps the active panel untouched", () => {
+    const active = makeReview();
+    changeReview(active.workspaceId, active.threadId, () => active);
+    expect(() => alignReview({ workspaceId: active.workspaceId, threadId: active.threadId, taskId: "review-task",
+      reviewProvider: "deepseek", reviewMode: "consensus", summary: "对齐。", round: 0 })).toThrow(/轮次/);
+    expect(readReview(active.workspaceId, active.threadId)).toEqual(active);
+    expect(fs.existsSync(`${reviewFile(active.workspaceId, active.threadId)}.lock`)).toBe(false);
   });
 
   it("releases its own lock after an invalid update without changing the saved state", () => {

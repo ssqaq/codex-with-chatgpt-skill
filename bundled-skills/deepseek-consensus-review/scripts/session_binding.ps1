@@ -2109,7 +2109,8 @@ function Assert-Lease(
     [long]$Epoch,
     [string]$Runtime,
     [long]$RuntimeEpochExpected,
-    [switch]$AllowOmittedBrowserSurface
+    [switch]$AllowOmittedBrowserSurface,
+    [switch]$AllowOmittedBrowserIdentity
 ) {
     $lease = Get-Lease
     if ($null -eq $lease -or (LeaseExpired $lease)) {
@@ -2129,17 +2130,36 @@ function Assert-Lease(
     ) {
         throw '浏览器 lease 不是 Codex 右侧栏创建的。'
     }
+    $presentedToken = Text $Token
+    if ([string]::IsNullOrWhiteSpace($presentedToken) -or $Epoch -lt 1) {
+        throw '缺少 lease token 或 lease epoch，不能核验浏览器锁；请先取租约再操作。'
+    }
     if (
-        (Prop $lease 'token') -ne (Text $Token) -or
+        (Prop $lease 'token') -ne $presentedToken -or
         (LongProp $lease 'leaseEpoch') -ne $Epoch
     ) {
         throw '浏览器 lease token 或 epoch 不一致。'
     }
-    if (
-        (Prop $lease 'browserRuntimeId') -ne (Text $Runtime) -or
-        (LongProp $lease 'runtimeEpoch') -ne $RuntimeEpochExpected
+    # 释放/续租只操作自己持有的 lease：调用方省略浏览器身份时，按 lease
+    # 记录的身份自校验，不能让“缺参数”伪装成“身份不一致”。
+    $presentedRuntime = Text $Runtime
+    $runtimeOmitted = [string]::IsNullOrWhiteSpace($presentedRuntime) -or $RuntimeEpochExpected -lt 1
+    if ($runtimeOmitted -and -not $AllowOmittedBrowserIdentity) {
+        throw '缺少浏览器 runtime 或 runtime epoch，不能核验浏览器锁。'
+    }
+    if (-not $runtimeOmitted) {
+        if (
+            (Prop $lease 'browserRuntimeId') -ne $presentedRuntime -or
+            (LongProp $lease 'runtimeEpoch') -ne $RuntimeEpochExpected
+        ) {
+            throw '浏览器 runtime 与 lease 不一致。'
+        }
+    }
+    elseif (
+        [string]::IsNullOrWhiteSpace((Prop $lease 'browserRuntimeId')) -or
+        (LongProp $lease 'runtimeEpoch') -lt 1
     ) {
-        throw '浏览器 runtime 与 lease 不一致。'
+        throw 'lease 记录的浏览器 runtime 身份不完整，保留原状态，核对后再操作。'
     }
     if (
         -not [string]::IsNullOrWhiteSpace((Text $Tab)) -and
@@ -4565,9 +4585,11 @@ switch ($Action) {
         With-BindingMutex {
             $lease = Get-Lease
             if ($null -eq $lease -or (LeaseExpired $lease)) {
-                throw 'lease 已过期。'
+                throw 'lease 已过期；过期 lease 不能续租，请重新取租约。'
             }
-            Assert-Lease (Prop $lease 'browserTabId') $LeaseToken $LeaseEpoch $BrowserRuntimeId $RuntimeEpoch
+            # 续租只延长本 thread 自己持有的 lease：允许省略浏览器身份，
+            # 省略时按 lease 记录自校验；token/epoch 仍然必须一致。
+            Assert-Lease (Prop $lease 'browserTabId') $LeaseToken $LeaseEpoch $BrowserRuntimeId $RuntimeEpoch -AllowOmittedBrowserSurface -AllowOmittedBrowserIdentity
             $now = Get-Date
             SetProp $lease 'expiresAt' $now.AddSeconds(
                 [math]::Max(30, [math]::Min(1800, $LeaseSeconds))
@@ -4591,7 +4613,9 @@ switch ($Action) {
                 Result @{ status = 'lease-already-free' } | ConvertTo-Json -Depth 20
                 return
             }
-            Assert-Lease (Prop $lease 'browserTabId') $LeaseToken $LeaseEpoch $BrowserRuntimeId $RuntimeEpoch -AllowOmittedBrowserSurface
+            # 释放只影响本 thread 自己持有的 lease：调用方可以省略浏览器身份，
+            # 省略时按 lease 记录的身份自校验；token/epoch 仍然必须一致。
+            Assert-Lease (Prop $lease 'browserTabId') $LeaseToken $LeaseEpoch $BrowserRuntimeId $RuntimeEpoch -AllowOmittedBrowserSurface -AllowOmittedBrowserIdentity
             Remove-LeaseFiles
             Result @{ status = 'lease-released' } | ConvertTo-Json -Depth 20
         }

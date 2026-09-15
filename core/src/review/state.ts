@@ -72,7 +72,14 @@ export function readReview(workspaceId: string, threadId: string): ReviewSession
   return s;
 }
 
-export function changeReview(workspaceId: string, threadId: string, transform: (s: ReviewSession | null) => ReviewSession): ReviewSession {
+/**
+ * Write a review session, archiving any previous one. A task switch normally
+ * requires the previous review to be finished; `allowTaskSwitch` is reserved
+ * for aligning the local panel with an already-verified active review task,
+ * where the old panel entry is archived rather than silently discarded.
+ */
+export function changeReview(workspaceId: string, threadId: string, transform: (s: ReviewSession | null) => ReviewSession,
+  options: { allowTaskSwitch?: boolean } = {}): ReviewSession {
   const file = reviewFile(workspaceId, threadId);
   ensureDir(path.dirname(file));
   const lock = `${file}.lock`;
@@ -84,7 +91,7 @@ export function changeReview(workspaceId: string, threadId: string, transform: (
     const next = ReviewSessionSchema.parse(transform(previous));
     if (next.workspaceId !== workspaceId || next.threadId !== threadId) throw new Error("review ownership mismatch");
     if (previous && previous.taskId !== next.taskId) {
-      if (!isReviewTerminal(previous)) throw new Error("active review must be completed or cancelled before a new task");
+      if (!isReviewTerminal(previous) && !options.allowTaskSwitch) throw new Error("active review must be completed or cancelled before a new task");
       writeSecureJson(path.join(path.dirname(file), "history", threadId, `${id.parse(previous.taskId)}.json`), previous);
     }
     writeSecureJson(file, next);
@@ -94,6 +101,33 @@ export function changeReview(workspaceId: string, threadId: string, transform: (
       threadId, round: next.round, phase: next.phase }) + "\n", { mode: 0o600 });
     return next;
   } finally { fs.closeSync(fd); fs.rmSync(lock, { force: true }); }
+}
+
+/**
+ * Align the local panel with a review task that has already been verified on
+ * this same thread. It never carries over consensus, replies, receipts or
+ * execution permission: the adopted entry starts as PREPARING and must pass
+ * the normal verification gates again. The previous panel entry is archived,
+ * so no history is destroyed and nothing is sent.
+ */
+export function alignReview(input: {
+  workspaceId: string; threadId: string; taskId: string; reviewProvider: ReviewProvider;
+  reviewMode: ReviewMode; summary: string; round: number; evidenceRevision?: number;
+  chatUrl?: string; modelName?: string; reasoningStrength?: string;
+}): ReviewSession {
+  if (!Number.isSafeInteger(input.round) || input.round < 1) throw new Error("对齐评审需要有效的轮次。");
+  const adopted = ReviewSessionSchema.parse({
+    ...newReview({ workspaceId: input.workspaceId, threadId: input.threadId, taskId: input.taskId,
+      reviewProvider: input.reviewProvider, reviewMode: input.reviewMode, summary: input.summary }),
+    round: input.round,
+    ...(input.evidenceRevision === undefined ? {} : { evidenceRevision: input.evidenceRevision }),
+    ...(input.chatUrl ? { chatUrl: input.chatUrl } : {}),
+    ...(input.modelName ? { modelName: input.modelName } : {}),
+    ...(input.reasoningStrength ? { reasoningStrength: input.reasoningStrength } : {}),
+    nextAction: input.reviewProvider === "deepseek" ? "sync-verified-review-task" : "continue-chatgpt-protocol",
+    updatedAt: new Date().toISOString(),
+  });
+  return changeReview(input.workspaceId, input.threadId, () => adopted, { allowTaskSwitch: true });
 }
 
 export function newReview(input: { workspaceId: string; threadId: string; taskId: string; reviewProvider: ReviewProvider; reviewMode: ReviewMode; summary: string }): ReviewSession {

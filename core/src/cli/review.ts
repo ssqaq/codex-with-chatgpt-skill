@@ -4,9 +4,9 @@ import fs from "node:fs";
 import { readUiPrefs } from "../config/ui-prefs.js";
 import { Workspace } from "../workspace/manager.js";
 import { mergeSession, readSession, sessionFile, writeSession } from "../session/state.js";
-import { deepseekDependency, readDeepseek, ReviewRateLimitError, runDeepseek } from "../review/deepseek.js";
+import { deepseekDependency, readDeepseek, ReviewRateLimitError, runDeepseek, verifiedAlignment } from "../review/deepseek.js";
 import { parseReviewMode, selectReviewer } from "../review/provider.js";
-import { assertReviewCompletion, beginReviewExecution, canExecuteReview, changeReview, clearReviewRateLimit, executionProgress, isReviewTerminal, markReviewRateLimited, newReview, readReview, recoverReview, renderReview, canRetryRateLimit, prepareFinalReview, type ReviewSession } from "../review/state.js";
+import { alignReview, assertReviewCompletion, beginReviewExecution, canExecuteReview, changeReview, clearReviewRateLimit, executionProgress, isReviewTerminal, markReviewRateLimited, newReview, readReview, recoverReview, renderReview, canRetryRateLimit, prepareFinalReview, type ReviewSession } from "../review/state.js";
 import { buildReviewMessage, buildRoundDelta } from "../review/message.js";
 import { observeReview, trackWait, waitProgress, nextReviewCheck } from "../review/wait.js";
 import { markTiming, timingSummary } from "../review/timing.js";
@@ -123,6 +123,25 @@ export function registerReviewCommands(program: Command): void {
       return markTiming({ ...next, replyValidationVersion: route.provider === "deepseek" ? 1 : undefined }, "messageReadyAt", next.createdAt);
     });
     output(s, opts);
+  });
+  action(command("bind", "按专用 Skill 已核验的绑定，把本地面板对齐到真正的评审任务")
+    .option("--task <id>", "只用于核对：必须与绑定记录一致，不能指定别的任务"), opts => {
+    const s = current(opts);
+    const alignment = verifiedAlignment(s, opts.task);
+    if (alignment.taskId === s.taskId) {
+      console.log(opts.json ? JSON.stringify({ ok: true, aligned: false, canExecute: canExecuteReview(s), session: s })
+        : `本地评审面板已经指向 ${s.taskId}，不需要对齐。`);
+      return;
+    }
+    if (s.reviewProvider !== "deepseek") throw new Error("只有 DeepSeek 评审需要按绑定对齐；ChatGPT 评审继续用原流程。");
+    // The previous panel entry is archived; consensus and receipts are never
+    // carried over, so execution stays closed until the normal gates pass.
+    const aligned = alignReview({ ...context(opts), taskId: alignment.taskId, reviewProvider: s.reviewProvider,
+      reviewMode: alignment.reviewMode, summary: alignment.summary, round: alignment.round,
+      evidenceRevision: alignment.evidenceRevision, chatUrl: alignment.chatUrl,
+      modelName: alignment.modelName, reasoningStrength: alignment.reasoningStrength });
+    console.log(opts.json ? JSON.stringify({ ok: true, aligned: true, previousTaskId: s.taskId, canExecute: canExecuteReview(aligned), session: aligned })
+      : `本地评审面板已对齐到 ${aligned.taskId}（原面板 ${s.taskId} 已归档）。没有发送消息、没有修改文件。`);
   });
   action(command("get", "读取当前任务已保存的评审进度"), opts => output(current(opts), opts));
   action(command("reply", "校验本轮完整网页回复；不自动确认 Codex 共识")

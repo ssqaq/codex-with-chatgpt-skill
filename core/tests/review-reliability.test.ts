@@ -479,6 +479,93 @@ describe("replacement after the original conversation is proven missing", () => 
   }, 30000);
 });
 
+
+describe("lease release and renew accept the owner's own minimal identity", () => {
+  function withLease() {
+    const smoke = spawnSync("pwsh", ["-NoProfile", "-NonInteractive", "-File", path.join(repo, "core/tests/fixtures/review-native-smoke.ps1"),
+      "-SkillRoot", bundle, "-StateDir", dir], { encoding: "utf8", timeout: 20000, windowsHide: true });
+    expect(smoke.status, smoke.stderr).toBe(0);
+    const base = ["-TaskId", "native-smoke", "-CodexThreadId", "native-test-thread", "-StateDir", dir,
+      "-BrowserSurface", "codex-in-app-sidebar", "-BrowserTabId", "synthetic-tab", "-BrowserRuntimeId", "synthetic-runtime",
+      "-RuntimeEpoch", "1", "-TabMatchCount", "1", "-EvidenceSource", "dom", "-DomTargetUrl", "https://chat.deepseek.com/",
+      "-DomSessionTitle", "Synthetic test", "-DomModel", "网页当前模型（合并升级版）", "-DomReasoning", "深度思考",
+      "-DomSearch", "智能搜索"];
+    const acquired = ps("session_binding.ps1", ["-Action", "AcquireBrowserLease", ...base]);
+    expect(acquired.status, acquired.stderr).toBe(0);
+    const json = JSON.parse(acquired.stdout);
+    return { base, token: String(json.lease?.token ?? json.leaseToken), epoch: String(json.lease?.leaseEpoch ?? json.leaseEpoch) };
+  }
+  const minimal = (task: string, token: string, epoch: string) =>
+    ["-TaskId", "native-smoke", "-CodexThreadId", "native-test-thread", "-StateDir", dir,
+      "-Action", task, "-LeaseToken", token, "-LeaseEpoch", epoch];
+  it("releases and renews with only the lease token and epoch, never a misleading identity error", () => {
+    const { token, epoch } = withLease();
+    const renewed = ps("session_binding.ps1", minimal("RenewBrowserLease", token, epoch));
+    expect(renewed.status, renewed.stderr).toBe(0);
+    expect(JSON.parse(renewed.stdout).status).toBe("lease-renewed");
+    const released = ps("session_binding.ps1", minimal("ReleaseBrowserLease", token, epoch));
+    expect(released.status, released.stderr).toBe(0);
+    expect(JSON.parse(released.stdout).status).toBe("lease-released");
+    expect(fs.existsSync(path.join(dir, "browser-lease.native-test-thread.json"))).toBe(false);
+  });
+  it("still refuses a wrong token, a wrong runtime and a missing token", () => {
+    const { base, token, epoch } = withLease();
+    const leaseFile = path.join(dir, "browser-lease.native-test-thread.json");
+    const before = fs.readFileSync(leaseFile, "utf8");
+    expect(ps("session_binding.ps1", minimal("ReleaseBrowserLease", "wrong-token", epoch)).status).not.toBe(0);
+    expect(ps("session_binding.ps1", minimal("RenewBrowserLease", token, "999")).status).not.toBe(0);
+    const wrongRuntime = ps("session_binding.ps1", ["-TaskId", "native-smoke", "-CodexThreadId", "native-test-thread", "-StateDir", dir,
+      "-Action", "ReleaseBrowserLease", "-LeaseToken", token, "-LeaseEpoch", epoch, "-BrowserRuntimeId", "other-runtime", "-RuntimeEpoch", "1"]);
+    expect(wrongRuntime.status).not.toBe(0);
+    expect(fs.readFileSync(leaseFile, "utf8")).toBe(before);
+    const noToken = ps("session_binding.ps1", ["-TaskId", "native-smoke", "-CodexThreadId", "native-test-thread", "-StateDir", dir,
+      "-Action", "ReleaseBrowserLease"]);
+    expect(noToken.status).not.toBe(0);
+    expect(noToken.stdout + noToken.stderr).toContain("缺少 lease token 或 lease epoch");
+    expect(fs.readFileSync(leaseFile, "utf8")).toBe(before);
+    expect(ps("session_binding.ps1", minimal("ReleaseBrowserLease", token, epoch)).status).toBe(0);
+  }, 30000);
+});
+
+describe("send failure reasons stay truthful but never leak private detail", () => {
+  it("surfaces the local script's own short Chinese reason and filters anything else", () => {
+    const message = "C1: check plan\nCODEX-BINDING-thread-test";
+    const state = { taskId: "task-test", codexThreadId: "thread-test", skillName: "deepseek-consensus-review", reviewBatch: "C1",
+      stateRevision: 1, taskTerminalStatus: "active", sessionBindingStatus: "bound", browserTabId: "test-tab",
+      browserRuntimeId: "test-runtime", runtimeEpoch: 1, deepseekSessionId: "official-chat:test-session-123",
+      conversationUrl: "https://chat.deepseek.com/a/chat/s/test-session-123", domMessageMarker: "CODEX-BINDING-thread-test", roundHistory: [] };
+    fs.writeFileSync(path.join(dir, "task-test.json"), JSON.stringify(state));
+    fs.writeFileSync(path.join(dir, "message.txt"), message);
+    fs.writeFileSync(path.join(dir, "evidence.json"), JSON.stringify({ source: "codex-in-app-browser", observationId: "fixture",
+      capturedAt: new Date().toISOString(), taskId: state.taskId, codexThreadId: state.codexThreadId, round: 1,
+      messageFingerprint: hash(message), messagePresence: "absent", browserSurface: "codex-in-app-sidebar",
+      browserTabId: state.browserTabId, browserRuntimeId: state.browserRuntimeId, runtimeEpoch: 1, tabMatchCount: 1,
+      deepseekSessionId: state.deepseekSessionId, domTargetUrl: state.conversationUrl, domSessionTitle: "test-title",
+      domMessageMarker: state.domMessageMarker, domModel: "网页当前模型（合并升级版）", domReasoning: "深度思考",
+      domSearch: "智能搜索", domInputPresence: "present", domInputEnabled: "enabled" }));
+    const run = (body: string) => {
+      const stub = path.join(dir, `stub-${hash(body).slice(0, 8)}/scripts`);
+      fs.mkdirSync(stub, { recursive: true });
+      fs.writeFileSync(path.join(stub, "session_binding.ps1"), body);
+      return ps("send_review_round.ps1", ["-TaskId", "task-test", "-CodexThreadId", "thread-test", "-StateDir", dir,
+        "-RoundNumber", "1", "-MessageFile", path.join(dir, "message.txt"), "-EvidenceFile", path.join(dir, "evidence.json"),
+        "-AuthorizationEvidence", "test-only authorization", "-SkillRoot", path.dirname(stub)]);
+    };
+    const safe = run("throw '没有有效浏览器 lease。'\n");
+    expect(safe.status).not.toBe(0);
+    expect(safe.stdout).toContain("没有有效浏览器 lease。");
+    for (const leaky of ["throw 'DO-NOT-LOG-AUTH-DETAILS'\n",
+      "throw '读取失败 C:/Users/Administrator/secret/key.txt 时出错。'\n", `throw '${"长".repeat(130)}。'\n`]) {
+      const result = run(leaky);
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).not.toContain("DO-NOT-LOG-AUTH-DETAILS");
+      expect(result.stdout + result.stderr).not.toContain("secret");
+      expect(result.stdout + result.stderr).not.toContain("长".repeat(130));
+      expect(result.stdout).toContain("保留原状态，核对后继续，禁止直接重发");
+    }
+  });
+});
+
 describe("public browser tool compatibility evidence", () => {
   it.each(["mcp__cua_repl.js", "mcp__node_repl.js"])("accepts %s only with a successful tool observation", tool => {
     const evidence = { surface:"codex-in-app-sidebar", url:"https://chat.deepseek.com/a/chat/s/synthetic-session-123",

@@ -21,6 +21,22 @@ $stage = 'precheck'
 function Fail([string]$message) { throw $message }
 function Text($value) { return ([string]$value).Trim() }
 function Hash([string]$value) { return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($value))).ToLowerInvariant() }
+# 只透出本工具自己写的中文原因，避免把原生异常、路径或凭据回显给用户。
+function Safe-NativeReason([object]$ErrorRecord) {
+    $candidate = ''
+    if ($null -ne $ErrorRecord) {
+        $candidate = ([string]$ErrorRecord.Exception.Message).Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($candidate)) { return '' }
+    $line = ($candidate -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Last 1).Trim()
+    # 结构化过滤：只接受本地脚本自己写的短中文原因，
+    # 带路径、引号、括号、管道符或换行的内容一律丢弃，避免回显凭据或路径。
+    if ($line.Length -gt 120) { return '' }
+    if ($line -notmatch '。$') { return '' }
+    if ($line -match '[\\/"<>|{}`]') { return '' }
+    if ($line -match '[A-Za-z]:') { return '' }
+    return $line
+}
 function Native([string]$action, [hashtable]$arguments) {
     $scriptPath = Join-Path $SkillRoot 'scripts/session_binding.ps1'
     try {
@@ -28,7 +44,13 @@ function Native([string]$action, [hashtable]$arguments) {
         $raw = & $scriptPath -Action $action @arguments | Out-String
         if ($LASTEXITCODE -ne 0) { Fail 'native-failed' }
         return ($raw | ConvertFrom-Json)
-    } catch { Fail "配套脚本在 $action 阶段失败；保留原状态，核对后继续，禁止直接重发。" }
+    } catch {
+        $reason = Safe-NativeReason $_
+        if ([string]::IsNullOrWhiteSpace($reason)) {
+            Fail "配套脚本在 $action 阶段失败；保留原状态，核对后继续，禁止直接重发。"
+        }
+        Fail "配套脚本在 $action 阶段失败：$reason 保留原状态，核对后继续，禁止直接重发。"
+    }
 }
 try {
     $CodexThreadId = $CodexThreadId -replace '^codex://threads/', ''

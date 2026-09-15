@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { deepseekDependency, deepseekSkillName, readDeepseek, ReviewRateLimitError, runDeepseek, syncDeepseek } from "../src/review/deepseek.js";
+import { deepseekDependency, deepseekSkillName, readDeepseek, ReviewRateLimitError, runDeepseek, syncDeepseek, verifiedAlignment } from "../src/review/deepseek.js";
 import { canExecuteReview, newReview, ReviewSessionSchema, type ReviewSession } from "../src/review/state.js";
 
 const execScript = vi.hoisted(() => vi.fn());
@@ -432,6 +432,64 @@ describe("DeepSeek installed-script dispatch and state reads", () => {
     expect(args).not.toContain("-ReviewBatch");
     expect(args).toContain("Advance");
     expect(JSON.parse(fs.readFileSync(path.join(dir, "task-test.json"), "utf8")).reviewBatch).toBe("C3");
+  });
+
+  it("names the verified active task when the local panel drifted, without sending or writing", () => {
+    const { session, source, binding } = fixture("consensus", 3);
+    // The panel still reads an old task while this thread's binding moved on.
+    // bindingRef follows the panel's own task id, exactly as newReview created it.
+    const panel = { ...session, taskId: "panel-old", round: 1, phase: "BLOCKED" as const, blockedReason: "旧提示",
+      bindingRef: { ...session.bindingRef!, taskId: "panel-old" } };
+    fs.writeFileSync(path.join(dir, "panel-old.json"), JSON.stringify({ taskId: "panel-old", codexThreadId: panel.threadId }));
+    source.taskId = "live-task";
+    source.sendOwnerTaskId = "live-task";
+    binding.activeTaskId = "live-task";
+    binding.sendOwnerTaskId = "live-task";
+    fs.writeFileSync(path.join(dir, "live-task.json"), JSON.stringify(source));
+    fs.writeFileSync(path.join(dir, "thread-bindings.json"), JSON.stringify({ bindings: [binding] }));
+    const drifted = syncDeepseek(panel, { ...source, taskId: "panel-old" }, [binding]);
+    expect(drifted.phase).toBe("BLOCKED");
+    expect(drifted.blockedReason).toContain("live-task");
+    expect(drifted.nextAction).toBe("c2c review bind --task live-task");
+    // Detection alone never becomes a send or a file write.
+    expect(canExecuteReview(drifted)).toBe(false);
+    expect(fs.readFileSync(path.join(dir, "live-task.json"), "utf8")).toBe(JSON.stringify(source));
+    // The same evidence resolves to the real task through the explicit command.
+    const alignment = verifiedAlignment(panel);
+    expect(alignment).toMatchObject({ taskId: "live-task", round: 3, reviewMode: "consensus",
+      chatUrl: "https://chat.deepseek.com/a/chat/s/abcdefgh12345678", modelName: "网页当前模型（合并升级版）",
+      reasoningStrength: "深度思考", evidenceRevision: 13 });
+  });
+
+  it("never aligns to an unverified, unsafe or unnamed task", () => {
+    const { session, source, binding } = fixture();
+    const panel = { ...session, taskId: "panel-old", bindingRef: { ...session.bindingRef!, taskId: "panel-old" } };
+    const write = (task: Raw, patch: Raw = {}) => {
+      fs.writeFileSync(path.join(dir, "panel-old.json"), JSON.stringify({ taskId: "panel-old", codexThreadId: panel.threadId }));
+      fs.writeFileSync(path.join(dir, "live-task.json"), JSON.stringify(task));
+      fs.writeFileSync(path.join(dir, "thread-bindings.json"), JSON.stringify({ bindings: [{ ...binding, activeTaskId: "live-task", sendOwnerTaskId: "live-task", ...patch }] }));
+    };
+    const live = { ...source, taskId: "live-task", sendOwnerTaskId: "live-task" };
+    write(live);
+    expect(verifiedAlignment(panel)).toMatchObject({ taskId: "live-task" });
+    expect(() => verifiedAlignment(panel, "someone-elses-task")).toThrow(/不一致/);
+    write({ ...live, activationStatus: "frozen" });
+    expect(() => verifiedAlignment(panel)).toThrow(/未激活|已结束/);
+    write({ ...live, taskTerminalStatus: "cancelled" });
+    expect(() => verifiedAlignment(panel)).toThrow(/未激活|已结束/);
+    write({ ...live, reviewCancelled: "true" });
+    expect(() => verifiedAlignment(panel)).toThrow(/已取消/);
+    write({ ...live, conversationUrl: "https://chat.deepseek.com/a/chat/s/wrong-session-9999" });
+    expect(() => verifiedAlignment(panel)).toThrow(/会话地址|会话或浏览器身份/);
+    write(live, { pendingReceipt: true });
+    expect(() => verifiedAlignment(panel)).toThrow(/审计风险|未确认发送/);
+    write({ ...live, browserTabId: "" }, { browserTabId: "" });
+    expect(() => verifiedAlignment(panel)).toThrow(/会话或浏览器身份/);
+    fs.writeFileSync(path.join(dir, "thread-bindings.json"), JSON.stringify({ bindings: [] }));
+    expect(() => verifiedAlignment(panel)).toThrow(/没有可用的 DeepSeek 绑定/);
+    const other = fixture();
+    fs.writeFileSync(path.join(dir, "thread-bindings.json"), JSON.stringify({ bindings: [binding, { ...other.binding, taskId: "dup", activeTaskId: "dup" }] }));
+    expect(() => verifiedAlignment(panel)).toThrow(/存在多个绑定/);
   });
 
   it("refuses a conflicting native task before dispatching any script", async () => {
